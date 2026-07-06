@@ -366,7 +366,7 @@ function LeftRail() {
                 key={view.id}
                 type="button"
                 className={activeView === view.id ? 'view-item active' : 'view-item'}
-                aria-label={`${view.label}：${view.detail}`}
+                aria-label={view.label}
                 title={`${view.label}：${view.detail}`}
                 onClick={() => setActiveView(view.id)}
               >
@@ -940,7 +940,7 @@ function RulesEditor() {
         </label>
         <div className="source-list">
           {(sourceRule?.orderedSources ?? []).map((source, index) => (
-            <article key={`${source.priority}-${source.label}`} className="source-row editable-source">
+            <article key={`source-${index}`} className="source-row editable-source">
               <span>{source.priority}</span>
               <label>
                 显示名称

@@ -109,3 +109,15 @@ test('supports advanced field validation, hidden suggestions, and delete confirm
   await page.getByRole('button', { name: '删除字段' }).first().click()
   await expect(page.getByText('这个章节还没有字段。')).toBeVisible()
 })
+
+test('keeps focus while editing source priority labels', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: /规定未来模型怎么读/ }).click()
+
+  const sourceName = page.getByLabel('显示名称').first()
+  await sourceName.fill('')
+  await sourceName.pressSequentially('用户最新指令')
+
+  await expect(sourceName).toBeFocused()
+  await expect(sourceName).toHaveValue('用户最新指令')
+})
