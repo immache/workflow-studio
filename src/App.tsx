@@ -12,10 +12,12 @@ import {
   Import,
   Layers3,
   ListChecks,
+  PanelRightOpen,
   Play,
   Plus,
   Save,
   Trash2,
+  X,
 } from 'lucide-react'
 import './App.css'
 import { exportHtmlDocuments } from './domain/export-html'
@@ -27,6 +29,7 @@ import {
   type FieldOption,
   type MaintenanceFormat,
   type SimulationScenario,
+  type SourceRef,
   type ValidationRule,
   type ValidationIssue,
   type WorkflowDocument,
@@ -44,16 +47,97 @@ import {
   type AppView,
 } from './store/workflow-store'
 
-const viewItems: { id: AppView; label: string; icon: typeof Layers3 }[] = [
-  { id: 'overview', label: '总览', icon: Layers3 },
-  { id: 'documents', label: '文档', icon: FilePlus2 },
-  { id: 'rules', label: '规则', icon: GitBranch },
-  { id: 'simulation', label: '模拟', icon: Play },
-  { id: 'export', label: '导出', icon: FileArchive },
+type UiCopy = {
+  label: string
+  detail: string
+  example?: string
+  recommended?: boolean
+  advanced?: boolean
+}
+
+const viewItems: { id: AppView; label: string; shortLabel: string; detail: string; icon: typeof Layers3 }[] = [
+  { id: 'overview', label: '当前工作流能不能交付', shortLabel: '能否交付', detail: '查看阻塞项、必填清单和下一步建议。', icon: Layers3 },
+  { id: 'documents', label: '写给未来模型看的资料', shortLabel: '未来资料', detail: '维护文档、章节、字段和当前内容。', icon: FilePlus2 },
+  { id: 'rules', label: '规定未来模型怎么读、怎么裁决', shortLabel: '读取裁决', detail: '设置读取顺序、来源信任顺序和冲突处理。', icon: GitBranch },
+  { id: 'simulation', label: '演练断线后如何恢复', shortLabel: '恢复演练', detail: '模拟新会话、上下文压缩和目标冲突。', icon: Play },
+  { id: 'export', label: '生成可复制的工作流包', shortLabel: '生成包', detail: '预览文件结构并下载工作流包。', icon: FileArchive },
 ]
 
 const scenarioOptions = Object.keys(scenarioLabels) as SimulationScenario[]
 let didInitialize = false
+
+const documentRoleCopy: Record<WorkflowDocument['role'], UiCopy> = {
+  protocol: { label: '恢复入口与总规则', detail: '规定未来模型如何恢复、按什么优先级行动。', example: 'AGENTS.md', recommended: true },
+  plan: { label: '长期计划', detail: '记录目标、范围、阶段、稳定约束。', example: 'SPEC.html' },
+  status: { label: '当前状态', detail: '记录当前目标、下一步、阻塞和恢复指针。', example: 'STATUS.html', recommended: true },
+  preference: { label: '长期用户偏好', detail: '记录跨任务稳定偏好，不记录一次性要求。', example: 'USER.html' },
+  history: { label: '历史演变', detail: '保存决策、废弃方案、替代关系。', example: 'MEMORY.html' },
+  context: { label: '术语解释', detail: '解释项目术语，不记录实时状态。', example: 'CONTEXT.html' },
+  validation: { label: '验收/检查规则', detail: '单独维护测试、质量门禁或审查规则。', example: 'CHECKS.html', advanced: true },
+  custom: { label: '自定义文档', detail: '上述类型都不贴合时使用，并写清职责边界。', example: 'RESEARCH.html', advanced: true },
+}
+
+const lifecycleCopy: Record<WorkflowDocument['lifecycle'], UiCopy> = {
+  realtime: { label: '会过期的当前信息', detail: '适合当前目标、下一步、实时阻塞。' },
+  stable: { label: '长期稳定计划', detail: '适合使命、范围、成功标准、阶段计划。', recommended: true },
+  historical: { label: '历史归档', detail: '适合已发生且用于理解演变的信息。' },
+  preference: { label: '长期偏好', detail: '适合用户反复确认、影响多数任务的偏好。' },
+  reference: { label: '参考解释', detail: '适合术语、定义、背景知识。' },
+  validation: { label: '检查规则', detail: '适合测试、验收、门禁、审查项。' },
+  mixed: { label: '复合信息，需写清边界', detail: '确实横跨多种生命周期时使用。', advanced: true },
+}
+
+const fieldTypeCopy: Record<WorkflowField['type'], UiCopy> = {
+  shortText: { label: '短文本', detail: '一句话、名称、短标签。', example: '当前目标' },
+  longText: { label: '长文本', detail: '说明、规则、段落内容。', example: '职责说明', recommended: true },
+  richText: { label: '带格式文本', detail: '需要列表、强调或结构化段落。', example: '完成协议' },
+  select: { label: '单选', detail: '只能从一个固定选项中选择。', example: '导出格式' },
+  multiSelect: { label: '多选', detail: '可以同时选择多个固定选项。', example: '适用场景' },
+  boolean: { label: '是/否', detail: '二元开关。', example: '是否必填' },
+  date: { label: '日期', detail: '明确日期或时间点。', example: '审查日期' },
+  path: { label: '路径', detail: '本地目录、文件或仓库路径。', example: 'D:\\codex\\...' },
+  url: { label: '链接', detail: '网页、仓库、文档地址。', example: 'GitHub 仓库' },
+  email: { label: '邮箱', detail: '需要邮箱格式校验。', example: '作者邮箱' },
+  code: { label: '代码/命令', detail: '命令、配置、代码片段。', example: 'npm run test' },
+  list: { label: '列表', detail: '多条同类文本。', example: '恢复读取顺序' },
+  table: { label: '表格', detail: '多列结构化条目。', example: '来源优先级', advanced: true },
+  reference: { label: '引用其他对象', detail: '字段值指向文档、章节或规则。', example: '关联文档', advanced: true },
+}
+
+const sourceTypeCopy: Record<SourceRef['sourceType'], UiCopy> = {
+  'latest-user-instruction': { label: '最新明确用户指令', detail: '用户刚刚说的目标、纠正或限制。', recommended: true },
+  'workspace-fact': { label: '新鲜工作区事实', detail: '文件、命令、测试、截图等当前可验证事实。', recommended: true },
+  'current-status': { label: '当前状态文档', detail: '状态快照里的当前目标、下一步和阻塞。' },
+  'stable-plan': { label: '稳定计划文档', detail: '使命、范围、阶段、长期约束。' },
+  'user-preference': { label: '长期用户偏好', detail: '跨任务稳定偏好。' },
+  'session-history': { label: '当前会话历史', detail: '恢复文档不足时的补充。', advanced: true },
+  'memory-history': { label: '项目历史档案', detail: '理解演变，不判断当前状态。', advanced: true },
+  'context-reference': { label: '术语参考', detail: '只解释术语，不覆盖事实。', advanced: true },
+  'older-history': { label: '更早历史', detail: '极少数溯源场景。', advanced: true },
+}
+
+const recencyPolicyCopy: Record<SourceRef['recencyPolicy'], UiCopy> = {
+  'prefer-newer': { label: '优先相信更新的信息', detail: '适合用户指令和工作区事实。', recommended: true },
+  'ignore-recency': { label: '不按新旧判断', detail: '适合稳定计划和术语解释。' },
+  manual: { label: '需要人工判断', detail: '适合复杂冲突。', advanced: true },
+}
+
+const conflictActionCopy: Record<WorkflowSchema['rules']['conflictPolicy']['defaultAction'], UiCopy> = {
+  'apply-source-priority': { label: '按来源排序自动裁决', detail: '默认按信任顺序选择信息。', recommended: true },
+  'ask-user': { label: '不确定时询问用户', detail: '适合敏感或无法自动裁决的决策。' },
+  'block-until-resolved': { label: '冲突未解决就停止', detail: '适合高风险工作流。', advanced: true },
+}
+
+const obsoleteHandlingCopy: Record<WorkflowSchema['rules']['historyPolicy']['obsoleteHandling'], UiCopy> = {
+  'mark-obsolete': { label: '标记为失效', detail: '保留历史，但明确不可作为当前依据。', recommended: true },
+  'archive-with-replacement': { label: '归档并写明替代关系', detail: '适合重要决策或方案替换。' },
+  delete: { label: '删除旧记录', detail: '仅用于非历史垃圾内容。', advanced: true },
+}
+
+const maintenanceFormatCopy: Record<MaintenanceFormat, UiCopy> = {
+  html: { label: 'HTML 文档（推荐主格式）', detail: '适合浏览器阅读和模型定位字段。', recommended: true },
+  markdown: { label: 'Markdown 文档（推荐次级格式）', detail: '适合纯文本仓库和 diff。' },
+}
 
 function statusLabel(status: string): string {
   if (status === 'saved') return '已保存'
@@ -151,7 +235,7 @@ function selectedField(workflow: WorkflowSchema, documentId: string, sectionId?:
     ?.fields.find((field) => field.id === fieldId)
 }
 
-function TopBar({ issueCount }: { issueCount: number }) {
+function TopBar({ issueCount, onOpenInspector }: { issueCount: number; onOpenInspector: () => void }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const saveStatus = useWorkflowStore((state) => state.saveStatus)
   const storageMessage = useWorkflowStore((state) => state.storageMessage)
@@ -187,6 +271,10 @@ function TopBar({ issueCount }: { issueCount: number }) {
         {issueCount > 0 ? <span className="status-pill">{issueCount} 个 Error</span> : <span className="status-pill status-pill-ok">可导出</span>}
       </div>
       <div className="topbar-actions">
+        <button type="button" className="button button-secondary" onClick={onOpenInspector}>
+          <PanelRightOpen size={16} aria-hidden="true" />
+          检查
+        </button>
         <button type="button" className="button button-secondary" onClick={() => fileInputRef.current?.click()}>
           <Import size={16} aria-hidden="true" />
           导入
@@ -250,10 +338,10 @@ function LeftRail() {
         <div className="rail-actions">
           <button type="button" className="button button-secondary" onClick={() => void createPresetProject()}>
             <Plus size={15} aria-hidden="true" />
-            标准预设
+            标准恢复文档
           </button>
           <button type="button" className="button button-ghost" onClick={() => void createBlankProject()}>
-            空白
+            最小工作流
           </button>
           <button type="button" className="button button-ghost" onClick={() => void duplicateCurrentProject()}>
             复制
@@ -268,15 +356,16 @@ function LeftRail() {
         </div>
       </section>
 
-      <nav className="rail-section" aria-label="工作台视图">
-        <div className="rail-heading">工作台</div>
+      <nav className="rail-section" aria-label="工作台任务">
+        <div className="rail-heading">任务路径</div>
         <div className="view-list">
           {viewItems.map((view) => {
             const Icon = view.icon
             return (
               <button key={view.id} type="button" className={activeView === view.id ? 'view-item active' : 'view-item'} onClick={() => setActiveView(view.id)}>
                 <Icon size={16} aria-hidden="true" />
-                {view.label}
+                <span>{view.label}</span>
+                <small>{view.detail}</small>
               </button>
             )
           })}
@@ -284,23 +373,18 @@ function LeftRail() {
       </nav>
 
       <section className="rail-section">
-        <div className="rail-heading">文档树</div>
-        <div className="document-tree">
-          {workflow.documents.map((document) => (
-            <button
-              key={document.id}
-              type="button"
-              className={selectedDocumentId === document.id ? 'document-node active' : 'document-node'}
-              onClick={() => {
-                selectDocument(document.id)
-                setActiveView('documents')
-              }}
-            >
-              <span>{document.title}</span>
-              <small>{document.filename}</small>
-            </button>
-          ))}
-        </div>
+        <div className="rail-heading">当前资料</div>
+        <p className="rail-note">{workflow.documents.length} 份文档，当前选中 {selectedDocumentId ? workflow.documents.find((document) => document.id === selectedDocumentId)?.filename : '无'}。</p>
+        <button
+          type="button"
+          className="button button-ghost rail-wide-action"
+          onClick={() => {
+            if (selectedDocumentId) selectDocument(selectedDocumentId)
+            setActiveView('documents')
+          }}
+        >
+          查看文档索引
+        </button>
       </section>
     </aside>
   )
@@ -309,19 +393,84 @@ function LeftRail() {
 function Overview({ issues }: { issues: ValidationIssue[] }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const updateWorkflowMeta = useWorkflowStore((state) => state.updateWorkflowMeta)
+  const createPresetProject = useWorkflowStore((state) => state.createPresetProject)
+  const createBlankProject = useWorkflowStore((state) => state.createBlankProject)
+  const importProject = useWorkflowStore((state) => state.importProject)
+  const setActiveView = useWorkflowStore((state) => state.setActiveView)
   const score = useMemo(() => scoreWorkflow(workflow, issues), [workflow, issues])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
   const warningCount = issues.filter((issue) => issue.severity === 'warning' && !issue.accepted).length
   const fieldCount = workflow.documents.reduce((sum, document) => sum + document.sections.reduce((inner, section) => inner + section.fields.length, 0), 0)
+  const blockingIssues = issues.filter((issue) => issue.severity === 'error')
+  const firstBlockingIssue = blockingIssues[0]
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleImport(file: File | undefined) {
+    if (!file) return
+    await importProject(file)
+  }
 
   return (
     <section className="workspace-section" aria-labelledby="overview-title">
-      <div className="editorial-hero">
+      <div className="delivery-hero">
         <div>
-          <span className="kicker">Local-first workflow builder</span>
-          <h1 id="overview-title">把工作流设计成可恢复、可维护、可导出的协议。</h1>
+          <span className="kicker">Delivery Readiness</span>
+          <h1 id="overview-title">当前工作流{errorCount > 0 ? '还不能交付。' : '可以交付。'}</h1>
+          <p>{errorCount > 0 ? `还有 ${errorCount} 个必须修复的问题。先处理第一个阻塞项，再运行恢复演练。` : '没有阻塞性错误。建议运行一次恢复演练，再生成工作流包。'}</p>
         </div>
-        <div className="hero-editor">
+        <div className={errorCount > 0 ? 'delivery-status blocked' : 'delivery-status'}>
+          {errorCount > 0 ? <AlertTriangle size={22} aria-hidden="true" /> : <CheckCircle2 size={22} aria-hidden="true" />}
+          <strong>{errorCount > 0 ? '导出被阻止' : '可生成工作流包'}</strong>
+          <span>{firstBlockingIssue ? firstBlockingIssue.title : `${workflow.documents.length} 份文档，${fieldCount} 个字段已纳入校验。`}</span>
+          <button type="button" className="button button-secondary" onClick={() => setActiveView(errorCount > 0 ? 'documents' : 'simulation')}>
+            {errorCount > 0 ? '查看要修的项' : '演练新会话恢复'}
+          </button>
+        </div>
+      </div>
+
+      <div className="entry-grid" aria-label="首次使用入口">
+        <article className="entry-card recommended">
+          <span className="kicker">推荐起点</span>
+          <h2>使用标准恢复文档</h2>
+          <p>从当前标准工作流开始，保留恢复入口、状态入口、历史和术语文档。</p>
+          <button type="button" className="button button-primary" onClick={() => void createPresetProject()}>
+            使用标准恢复文档
+          </button>
+        </article>
+        <article className="entry-card">
+          <span className="kicker">最小起点</span>
+          <h2>创建最小工作流</h2>
+          <p>只生成基础文档和必填字段，适合从零设计新的协作协议。</p>
+          <button type="button" className="button button-secondary" onClick={() => void createBlankProject()}>
+            创建最小工作流
+          </button>
+        </article>
+        <article className="entry-card">
+          <span className="kicker">已有文件</span>
+          <h2>导入 ZIP 或 JSON</h2>
+          <p>读取已有工作流包。高版本 schema 会进入只读模式，避免误写。</p>
+          <button type="button" className="button button-secondary" onClick={() => fileInputRef.current?.click()}>
+            导入已有 ZIP/JSON
+          </button>
+          <input
+            ref={fileInputRef}
+            className="visually-hidden"
+            type="file"
+            tabIndex={-1}
+            accept=".json,.zip,application/json,application/zip"
+            onChange={(event) => void handleImport(event.currentTarget.files?.[0])}
+          />
+        </article>
+      </div>
+
+      <div className="setup-grid">
+        <section className="setup-panel">
+          <div className="section-heading compact">
+            <div>
+              <h2>三个必答问题</h2>
+              <p>这些内容会写入导出的 README 和工作流描述。</p>
+            </div>
+          </div>
           <label>
             项目名称
             <input value={workflow.name} onChange={(event) => updateWorkflowMeta({ name: event.currentTarget.value, description: workflow.description })} />
@@ -330,7 +479,22 @@ function Overview({ issues }: { issues: ValidationIssue[] }) {
             一句话说明
             <textarea value={workflow.description} rows={3} onChange={(event) => updateWorkflowMeta({ name: workflow.name, description: event.currentTarget.value })} />
           </label>
-        </div>
+          <p className="format-note">当前主维护格式：{maintenanceFormatCopy[workflow.maintenanceFormat].label}</p>
+        </section>
+        <section className="setup-panel">
+          <div className="section-heading compact">
+            <div>
+              <h2>最后会得到什么</h2>
+              <p>导出不是保存网页，而是生成可复制到项目里的工作流包。</p>
+            </div>
+          </div>
+          <ul className="artifact-list">
+            <li><code>workflow.json</code><span>保留完整结构，供再次导入和继续编辑。</span></li>
+            <li><code>README.md</code><span>说明如何使用这套工作流包。</span></li>
+            <li>HTML / Markdown 文档<span>给未来模型和人类直接阅读。</span></li>
+            <li>ZIP 工作流包<span>一次性下载并复制到新项目。</span></li>
+          </ul>
+        </section>
       </div>
 
       <div className="metric-grid" aria-label="工作流摘要">
@@ -340,7 +504,7 @@ function Overview({ issues }: { issues: ValidationIssue[] }) {
         <Metric label="导出" value={workflow.maintenanceFormat.toUpperCase()} detail={workflow.secondaryFormat ? `次级 ${workflow.secondaryFormat}` : '无次级格式'} />
       </div>
 
-      <div className="split-panel">
+      <div className="split-panel secondary-flow">
         <RelationshipGraph workflow={workflow} issues={issues} />
         <section className="plain-panel">
           <div className="section-heading">
@@ -397,6 +561,9 @@ function DocumentEditor() {
   const removeField = useWorkflowStore((state) => state.removeField)
   const document = selectedDocument(workflow, selectedDocumentId)
   const documentIndex = document ? workflow.documents.findIndex((item) => item.id === document.id) : -1
+  const handleFieldFocus = (documentId: string, sectionId: string, fieldId: string) => {
+    selectFieldAction(documentId, sectionId, fieldId)
+  }
 
   if (!document) {
     return (
@@ -411,7 +578,8 @@ function DocumentEditor() {
       <div className="section-heading">
         <div>
           <span className="kicker">Documents</span>
-          <h1 id="documents-title">文档、章节与字段</h1>
+          <h1 id="documents-title">写给未来模型看的资料</h1>
+          <p>先写清每份文档的职责，再维护字段说明和当前内容。结构和高级校验默认收起。</p>
         </div>
         <button type="button" className="button button-primary" onClick={addDocument}>
           <FilePlus2 size={16} aria-hidden="true" />
@@ -419,10 +587,11 @@ function DocumentEditor() {
         </button>
       </div>
 
-      <div className="document-selector" aria-label="选择文档">
+      <div className="document-selector" aria-label="文档索引">
         {workflow.documents.map((item) => (
           <button key={item.id} type="button" className={item.id === document.id ? 'chip active' : 'chip'} onClick={() => selectDocument(item.id)}>
-            {item.filename}
+            <span>{item.filename}</span>
+            <small>{documentRoleCopy[item.role].label}</small>
           </button>
         ))}
       </div>
@@ -437,16 +606,18 @@ function DocumentEditor() {
           <input value={document.filename} onChange={(event) => updateDocument(document.id, { filename: event.currentTarget.value })} />
         </label>
         <label>
-          角色
+          这份文档承担什么职责
           <select value={document.role} onChange={(event) => updateDocument(document.id, { role: event.currentTarget.value as WorkflowDocument['role'] })}>
-            {documentRoleOptions.map((role) => <option key={role}>{role}</option>)}
+            {documentRoleOptions.map((role) => <option key={role} value={role}>{documentRoleCopy[role].label}</option>)}
           </select>
+          <small>{documentRoleCopy[document.role].detail}</small>
         </label>
         <label>
-          生命周期
+          里面的信息多久会变化
           <select value={document.lifecycle} onChange={(event) => updateDocument(document.id, { lifecycle: event.currentTarget.value as WorkflowDocument['lifecycle'] })}>
-            {lifecycleOptions.map((lifecycle) => <option key={lifecycle}>{lifecycle}</option>)}
+            {lifecycleOptions.map((lifecycle) => <option key={lifecycle} value={lifecycle}>{lifecycleCopy[lifecycle].label}</option>)}
           </select>
+          <small>{lifecycleCopy[document.lifecycle].detail}</small>
         </label>
         <label className="wide-field">
           职责说明
@@ -494,9 +665,9 @@ function DocumentEditor() {
                 <input value={section.title} onChange={(event) => updateSection(document.id, section.id, { title: event.currentTarget.value })} />
               </label>
               <label>
-                生命周期
+                信息变化频率
                 <select value={section.lifecycle} onChange={(event) => updateSection(document.id, section.id, { lifecycle: event.currentTarget.value as WorkflowDocument['lifecycle'] })}>
-                  {lifecycleOptions.map((lifecycle) => <option key={lifecycle}>{lifecycle}</option>)}
+                  {lifecycleOptions.map((lifecycle) => <option key={lifecycle} value={lifecycle}>{lifecycleCopy[lifecycle].label}</option>)}
                 </select>
               </label>
               <label className="wide-field">
@@ -507,90 +678,117 @@ function DocumentEditor() {
             <div className="field-list">
               {section.fields.map((field) => (
                 <article key={field.id} className="field-editor" data-field={field.id}>
-                  <div className="field-grid">
+                  <div className="field-default">
                     <label>
-                      字段名
-                      <input value={field.label} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { label: event.currentTarget.value })} />
+                      字段名称
+                      <input value={field.label} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { label: event.currentTarget.value })} />
                     </label>
                     <label>
-                      类型
-                      <select value={field.type} onChange={(event) => updateField(document.id, section.id, field.id, { type: event.currentTarget.value as WorkflowField['type'] })}>
-                        {fieldTypeOptions.map((type) => <option key={type}>{type}</option>)}
-                      </select>
+                      给未来模型看的填写规则
+                      <textarea rows={2} value={field.guidance} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { guidance: event.currentTarget.value })} />
                     </label>
-                    <label>
-                      生命周期
-                      <select value={field.lifecycle} onChange={(event) => updateField(document.id, section.id, field.id, { lifecycle: event.currentTarget.value as WorkflowDocument['lifecycle'] })}>
-                        {lifecycleOptions.map((lifecycle) => <option key={lifecycle}>{lifecycle}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                  <label>
-                    常驻说明
-                    <textarea rows={2} value={field.guidance} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { guidance: event.currentTarget.value })} />
-                  </label>
-                  {field.repeatable ? (
-                    <div className="repeatable-editor" aria-label={`${field.label} 值槽实例列表`}>
-                      <div className="repeatable-heading">
-                        <span>值槽实例</span>
-                        <button type="button" className="button button-secondary" onClick={() => addFieldInstance(document.id, section.id, field.id)}>
-                          <Plus size={15} aria-hidden="true" />
-                          添加实例
-                        </button>
-                      </div>
-                      {fieldInstances(field).map((item, index) => (
-                        <div key={`${field.id}-${index}`} className="repeatable-row">
-                          <label>
-                            实例 {index + 1}
-                            <input value={fieldValueToText(item)} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onInput={(event) => updateFieldInstance(document.id, section.id, field.id, index, event.currentTarget.value)} />
-                          </label>
-                          <div className="inline-actions">
-                            <button type="button" className="icon-button" aria-label="实例上移" disabled={index === 0} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, -1)}>↑</button>
-                            <button type="button" className="icon-button" aria-label="实例下移" disabled={index === fieldInstances(field).length - 1} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, 1)}>↓</button>
-                            <button type="button" className="icon-button" aria-label="复制实例" onClick={(event) => {
-                              const input = event.currentTarget.closest('.repeatable-row')?.querySelector('input')
-                              copyFieldInstance(document.id, section.id, field.id, index, input?.value)
-                            }}>
-                              <Plus size={15} aria-hidden="true" />
-                            </button>
-                            <button type="button" className="icon-button" aria-label="删除实例" onClick={() => removeFieldInstance(document.id, section.id, field.id, index)}>
-                              <Trash2 size={15} aria-hidden="true" />
-                            </button>
-                          </div>
+                    {field.repeatable ? (
+                      <div className="repeatable-editor" aria-label={`${field.label} 内容条目列表`}>
+                        <div className="repeatable-heading">
+                          <span>多条当前内容</span>
+                          <button type="button" className="button button-secondary" onClick={() => addFieldInstance(document.id, section.id, field.id)}>
+                            <Plus size={15} aria-hidden="true" />
+                            添加内容
+                          </button>
                         </div>
-                      ))}
-                      {fieldInstances(field).length === 0 ? <p className="muted">还没有实例，添加后会写入 list 值。</p> : null}
+                        {fieldInstances(field).map((item, index) => (
+                          <div key={`${field.id}-${index}`} className="repeatable-row">
+                            <label>
+                              内容条目 {index + 1}
+                              <input value={fieldValueToText(item)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onInput={(event) => updateFieldInstance(document.id, section.id, field.id, index, event.currentTarget.value)} />
+                            </label>
+                            <div className="inline-actions">
+                              <button type="button" className="icon-button" aria-label="内容上移" disabled={index === 0} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, -1)}>↑</button>
+                              <button type="button" className="icon-button" aria-label="内容下移" disabled={index === fieldInstances(field).length - 1} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, 1)}>↓</button>
+                              <button type="button" className="icon-button" aria-label="复制内容" onClick={(event) => {
+                                const input = event.currentTarget.closest('.repeatable-row')?.querySelector('input')
+                                copyFieldInstance(document.id, section.id, field.id, index, input?.value)
+                              }}>
+                                <Plus size={15} aria-hidden="true" />
+                              </button>
+                              <button type="button" className="icon-button" aria-label="删除内容" onClick={() => removeFieldInstance(document.id, section.id, field.id, index)}>
+                                <Trash2 size={15} aria-hidden="true" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {fieldInstances(field).length === 0 ? <p className="muted">还没有内容，添加后会写入列表值。</p> : null}
+                      </div>
+                    ) : (
+                      <label>
+                        当前内容
+                        <textarea rows={4} value={fieldValueToText(field.value)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateFieldText(document.id, section.id, field.id, event.currentTarget.value)} />
+                      </label>
+                    )}
+                  </div>
+                  <div className="field-flags">
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={field.required} onChange={(event) => updateField(document.id, section.id, field.id, { required: event.currentTarget.checked })} />
+                      必须填写
+                    </label>
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={field.allowEmpty} onChange={(event) => updateField(document.id, section.id, field.id, { allowEmpty: event.currentTarget.checked })} />
+                      允许暂时为空
+                    </label>
+                    <button type="button" className="button button-ghost danger" onClick={() => {
+                      if (confirmDelete(`字段 ${field.label}`)) removeField(document.id, section.id, field.id)
+                    }}>
+                      删除字段
+                    </button>
+                  </div>
+                  <details className="field-details">
+                    <summary>结构设置</summary>
+                    <div className="field-grid">
+                      <label>
+                        字段类型
+                        <select value={field.type} onChange={(event) => updateField(document.id, section.id, field.id, { type: event.currentTarget.value as WorkflowField['type'] })}>
+                          {fieldTypeOptions.map((type) => <option key={type} value={type}>{fieldTypeCopy[type].label}</option>)}
+                        </select>
+                        <small>{fieldTypeCopy[field.type].detail}</small>
+                      </label>
+                      <label>
+                        信息变化频率
+                        <select value={field.lifecycle} onChange={(event) => updateField(document.id, section.id, field.id, { lifecycle: event.currentTarget.value as WorkflowDocument['lifecycle'] })}>
+                          {lifecycleOptions.map((lifecycle) => <option key={lifecycle} value={lifecycle}>{lifecycleCopy[lifecycle].label}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        默认内容
+                        <input value={typeof field.defaultValue === 'string' ? field.defaultValue : ''} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { defaultValue: event.currentTarget.value.trim().length === 0 ? undefined : event.currentTarget.value })} />
+                      </label>
+                      <label className="checkbox-label">
+                        <input type="checkbox" checked={field.repeatable} onChange={(event) => updateField(document.id, section.id, field.id, { repeatable: event.currentTarget.checked })} />
+                        允许多条内容
+                      </label>
+                      <label className="wide-field">
+                        可选项
+                        <textarea
+                          rows={3}
+                          value={optionsToText(field.options)}
+                          placeholder="value | label | description…"
+                          onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
+                          onChange={(event) => {
+                            const options = parseOptionsText(event.currentTarget.value)
+                            updateField(document.id, section.id, field.id, {
+                              options,
+                              validation: {
+                                ...field.validation,
+                                allowedValues: options?.map((option) => option.value),
+                              },
+                            })
+                          }}
+                        />
+                      </label>
                     </div>
-                  ) : (
-                    <label>
-                      值槽
-                      <textarea rows={4} value={fieldValueToText(field.value)} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onChange={(event) => updateFieldText(document.id, section.id, field.id, event.currentTarget.value)} />
-                    </label>
-                  )}
-                  <div className="field-advanced">
-                    <label>
-                      默认值
-                      <input value={typeof field.defaultValue === 'string' ? field.defaultValue : ''} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { defaultValue: event.currentTarget.value.trim().length === 0 ? undefined : event.currentTarget.value })} />
-                    </label>
-                    <label>
-                      选项
-                      <textarea
-                        rows={3}
-                        value={optionsToText(field.options)}
-                        placeholder="value | label | description…"
-                        onFocus={() => selectFieldAction(document.id, section.id, field.id)}
-                        onChange={(event) => {
-                          const options = parseOptionsText(event.currentTarget.value)
-                          updateField(document.id, section.id, field.id, {
-                            options,
-                            validation: {
-                              ...field.validation,
-                              allowedValues: options?.map((option) => option.value),
-                            },
-                          })
-                        }}
-                      />
-                    </label>
+                  </details>
+                  <details className="field-details">
+                    <summary>高级校验与底层值</summary>
+                    <div className="field-advanced">
                     <label>
                       最小长度
                       <input
@@ -598,7 +796,7 @@ function DocumentEditor() {
                         min="0"
                         inputMode="numeric"
                         value={field.validation.minLength ?? ''}
-                        onFocus={() => selectFieldAction(document.id, section.id, field.id)}
+                        onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
                         onChange={(event) => updateField(document.id, section.id, field.id, {
                           validation: {
                             ...field.validation,
@@ -614,7 +812,7 @@ function DocumentEditor() {
                         min="0"
                         inputMode="numeric"
                         value={field.validation.maxLength ?? ''}
-                        onFocus={() => selectFieldAction(document.id, section.id, field.id)}
+                        onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
                         onChange={(event) => updateField(document.id, section.id, field.id, {
                           validation: {
                             ...field.validation,
@@ -624,39 +822,22 @@ function DocumentEditor() {
                       />
                     </label>
                     <label>
-                      Pattern
-                      <input value={field.validation.pattern ?? ''} onFocus={() => selectFieldAction(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, pattern: event.currentTarget.value || undefined } })} />
+                      格式限制
+                      <input value={field.validation.pattern ?? ''} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, pattern: event.currentTarget.value || undefined } })} />
                     </label>
                     <label className="wide-field">
-                      自定义校验
+                      高级校验
                       <textarea
                         rows={3}
                         value={customRulesToText(field.validation.customRules)}
                         placeholder="warning | non-empty | 说明…"
-                        onFocus={() => selectFieldAction(document.id, section.id, field.id)}
+                        onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
                         onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, customRules: parseCustomRulesText(event.currentTarget.value) } })}
                       />
                     </label>
-                  </div>
-                  <div className="field-flags">
-                    <label className="checkbox-label">
-                      <input type="checkbox" checked={field.required} onChange={(event) => updateField(document.id, section.id, field.id, { required: event.currentTarget.checked })} />
-                      必填
-                    </label>
-                    <label className="checkbox-label">
-                      <input type="checkbox" checked={field.allowEmpty} onChange={(event) => updateField(document.id, section.id, field.id, { allowEmpty: event.currentTarget.checked })} />
-                      允许空值导出
-                    </label>
-                    <label className="checkbox-label">
-                      <input type="checkbox" checked={field.repeatable} onChange={(event) => updateField(document.id, section.id, field.id, { repeatable: event.currentTarget.checked })} />
-                      多条实例
-                    </label>
-                    <button type="button" className="button button-ghost danger" onClick={() => {
-                      if (confirmDelete(`字段 ${field.label}`)) removeField(document.id, section.id, field.id)
-                    }}>
-                      删除字段
-                    </button>
-                  </div>
+                    <p className="raw-meta">底层值：{field.type} · {field.lifecycle} · {field.repeatable ? 'repeatable' : 'single'}</p>
+                    </div>
+                  </details>
                 </article>
               ))}
               {section.fields.length === 0 ? <p className="muted">这个章节还没有字段。</p> : null}
@@ -698,33 +879,34 @@ function RulesEditor() {
       <div className="section-heading">
         <div>
           <span className="kicker">Rules</span>
-          <h1 id="rules-title">恢复顺序与来源优先级</h1>
+          <h1 id="rules-title">规定未来模型怎么读、怎么裁决</h1>
+          <p>把恢复顺序、信息来源和冲突策略写成未来模型能执行的判断规则。</p>
         </div>
         <button type="button" className="button button-primary" onClick={() => addRecoveryStep(workflow.documents[0]?.id ?? '')} disabled={workflow.documents.length === 0}>
           <Plus size={16} aria-hidden="true" />
-          恢复步骤
+          添加读取步骤
         </button>
       </div>
 
       <section className="plain-panel">
-        <h2>恢复顺序</h2>
+        <h2>未来模型先读什么</h2>
         <div className="rule-list">
           {workflow.rules.recoveryOrder.map((step, index) => (
             <article key={step.id} className="rule-row">
               <span className="rule-index">{index + 1}</span>
               <label>
-                文档
+                要读取的文档
                 <select value={step.documentId} onChange={(event) => updateRecoveryStep(step.id, { documentId: event.currentTarget.value })}>
-                  {workflow.documents.map((document) => <option key={document.id} value={document.id}>{document.filename}</option>)}
+                  {workflow.documents.map((document) => <option key={document.id} value={document.id}>{document.filename} · {documentRoleCopy[document.role].label}</option>)}
                 </select>
               </label>
               <label>
-                读取条件
+                什么时候读取
                 <input value={step.condition} onChange={(event) => updateRecoveryStep(step.id, { condition: event.currentTarget.value })} />
               </label>
               <label className="checkbox-label inline-checkbox">
                 <input type="checkbox" checked={step.required} onChange={(event) => updateRecoveryStep(step.id, { required: event.currentTarget.checked })} />
-                必读
+                恢复时必须读
               </label>
               <button type="button" className="icon-button" aria-label="删除恢复步骤" onClick={() => {
                 if (confirmDelete('恢复步骤')) removeRecoveryStep(step.id)
@@ -738,14 +920,14 @@ function RulesEditor() {
 
       <section className="plain-panel">
         <div className="section-heading compact">
-          <h2>来源优先级</h2>
+          <h2>信息冲突时信谁</h2>
           <button type="button" className="button button-secondary" onClick={addSourceRef}>
             <Plus size={15} aria-hidden="true" />
-            来源
+            添加来源
           </button>
         </div>
         <label>
-          裁决理由
+          为什么这样排序
           <textarea rows={3} value={sourceRule?.reason ?? ''} onChange={(event) => updateSourcePriorityReason(event.currentTarget.value)} />
         </label>
         <div className="source-list">
@@ -753,21 +935,22 @@ function RulesEditor() {
             <article key={`${source.priority}-${source.label}`} className="source-row editable-source">
               <span>{source.priority}</span>
               <label>
-                标签
+                显示名称
                 <input value={source.label} onChange={(event) => updateSourceRef(index, { label: event.currentTarget.value })} />
               </label>
               <label>
                 来源类型
                 <select value={source.sourceType} onChange={(event) => updateSourceRef(index, { sourceType: event.currentTarget.value as typeof source.sourceType })}>
-                  {sourceTypeOptions.map((type) => <option key={type}>{type}</option>)}
+                  {sourceTypeOptions.map((type) => <option key={type} value={type}>{sourceTypeCopy[type].label}</option>)}
                 </select>
+                <small>{sourceTypeCopy[source.sourceType].detail}</small>
               </label>
               <label>
-                新鲜度
+                信息新旧怎么处理
                 <select value={source.recencyPolicy} onChange={(event) => updateSourceRef(index, { recencyPolicy: event.currentTarget.value as typeof source.recencyPolicy })}>
-                  <option value="prefer-newer">prefer-newer</option>
-                  <option value="ignore-recency">ignore-recency</option>
-                  <option value="manual">manual</option>
+                  <option value="prefer-newer">{recencyPolicyCopy['prefer-newer'].label}</option>
+                  <option value="ignore-recency">{recencyPolicyCopy['ignore-recency'].label}</option>
+                  <option value="manual">{recencyPolicyCopy.manual.label}</option>
                 </select>
               </label>
               <div className="inline-actions">
@@ -786,19 +969,19 @@ function RulesEditor() {
 
       <section className="plain-panel">
         <div className="section-heading compact">
-          <h2>更新触发器</h2>
+          <h2>什么时候必须更新文档</h2>
           <button type="button" className="button button-secondary" onClick={addUpdateTrigger}>
             <Plus size={15} aria-hidden="true" />
-            触发器
+            添加触发条件
           </button>
         </div>
         <div className="rule-list">
           {workflow.rules.updateTriggers.map((trigger) => (
             <article key={trigger.id} className="trigger-row">
               <label>
-                目标文档
+                需要更新的文档
                 <select value={trigger.targetDocumentId} onChange={(event) => updateTrigger(trigger.id, { targetDocumentId: event.currentTarget.value })}>
-                  {workflow.documents.map((document) => <option key={document.id} value={document.id}>{document.filename}</option>)}
+                  {workflow.documents.map((document) => <option key={document.id} value={document.id}>{document.filename} · {documentRoleCopy[document.role].label}</option>)}
                 </select>
               </label>
               <label>
@@ -821,10 +1004,10 @@ function RulesEditor() {
 
       <section className="plain-panel">
         <div className="section-heading compact">
-          <h2>完成检查</h2>
+          <h2>交付前必须确认什么</h2>
           <button type="button" className="button button-secondary" onClick={addCompletionCheck}>
             <Plus size={15} aria-hidden="true" />
-            检查
+            添加检查
           </button>
         </div>
         <div className="rule-list">
@@ -839,10 +1022,10 @@ function RulesEditor() {
                 <input value={check.description} onChange={(event) => updateCompletionCheck(check.id, { description: event.currentTarget.value })} />
               </label>
               <label>
-                缺失级别
+                缺失时的影响
                 <select value={check.severityWhenMissing} onChange={(event) => updateCompletionCheck(check.id, { severityWhenMissing: event.currentTarget.value as typeof check.severityWhenMissing })}>
-                  <option value="error">error</option>
-                  <option value="warning">warning</option>
+                  <option value="error">必须修复，否则不能导出</option>
+                  <option value="warning">有风险，可接受但会记录</option>
                 </select>
               </label>
               <button type="button" className="icon-button" aria-label="删除完成检查" onClick={() => {
@@ -857,18 +1040,18 @@ function RulesEditor() {
 
       <section className="form-band">
         <label>
-          冲突默认动作
+          信息冲突时默认怎么做
           <select value={workflow.rules.conflictPolicy.defaultAction} onChange={(event) => updateConflictPolicy({ defaultAction: event.currentTarget.value as typeof workflow.rules.conflictPolicy.defaultAction })}>
-            <option value="apply-source-priority">apply-source-priority</option>
-            <option value="ask-user">ask-user</option>
-            <option value="block-until-resolved">block-until-resolved</option>
+            <option value="apply-source-priority">{conflictActionCopy['apply-source-priority'].label}</option>
+            <option value="ask-user">{conflictActionCopy['ask-user'].label}</option>
+            <option value="block-until-resolved">{conflictActionCopy['block-until-resolved'].label}</option>
           </select>
         </label>
         <label>
-          未解决冲突级别
+          未解决冲突的影响
           <select value={workflow.rules.conflictPolicy.unresolvedConflictSeverity} onChange={(event) => updateConflictPolicy({ unresolvedConflictSeverity: event.currentTarget.value as typeof workflow.rules.conflictPolicy.unresolvedConflictSeverity })}>
-            <option value="error">error</option>
-            <option value="warning">warning</option>
+            <option value="error">必须修复，否则不能导出</option>
+            <option value="warning">有风险，可接受但会记录</option>
           </select>
         </label>
         <label className="checkbox-label">
@@ -880,11 +1063,11 @@ function RulesEditor() {
           历史只追加
         </label>
         <label>
-          失效历史处理
+          旧历史怎么处理
           <select value={workflow.rules.historyPolicy.obsoleteHandling} onChange={(event) => updateHistoryPolicy({ obsoleteHandling: event.currentTarget.value as typeof workflow.rules.historyPolicy.obsoleteHandling })}>
-            <option value="mark-obsolete">mark-obsolete</option>
-            <option value="archive-with-replacement">archive-with-replacement</option>
-            <option value="delete">delete</option>
+            <option value="mark-obsolete">{obsoleteHandlingCopy['mark-obsolete'].label}</option>
+            <option value="archive-with-replacement">{obsoleteHandlingCopy['archive-with-replacement'].label}</option>
+            <option value="delete">{obsoleteHandlingCopy.delete.label}</option>
           </select>
         </label>
         <label className="checkbox-label">
@@ -908,7 +1091,8 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
       <div className="section-heading">
         <div>
           <span className="kicker">Simulation</span>
-          <h1 id="simulation-title">恢复模拟器</h1>
+          <h1 id="simulation-title">演练断线后如何恢复</h1>
+          <p>查看未来模型会先读什么、为什么读、冲突时信谁，以及下一处应该改哪里。</p>
         </div>
         <div className="inline-actions">
           <select value={scenario} onChange={(event) => setScenario(event.currentTarget.value as SimulationScenario)} aria-label="选择模拟情境">
@@ -916,7 +1100,7 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
           </select>
           <button type="button" className="button button-primary" onClick={() => setResultScenario(scenario)}>
             <Play size={16} aria-hidden="true" />
-            运行模拟
+            演练新会话恢复
           </button>
         </div>
       </div>
@@ -925,7 +1109,7 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
         <RelationshipGraph workflow={workflow} issues={issues} activeDocumentIds={result.readDocuments} />
         <section className={`plain-panel simulation-status simulation-${result.status}`}>
           <h2>{scenarioLabels[result.scenario]}</h2>
-          <p>{result.nextAtomicStep}</p>
+          <p>{result.nextAtomicStep ? `下一步建议：${result.nextAtomicStep}` : '本次演练没有发现新的下一步。'}</p>
           {result.blockers.length > 0 ? (
             <ul className="blocker-list">
               {result.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
@@ -936,7 +1120,7 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
               {result.conflicts.map((conflict) => (
                 <article key={conflict.id}>
                   <strong>{conflict.description}</strong>
-                  <p>裁决：{conflict.selectedSource?.label ?? '需要人工确认'}。{conflict.reason}</p>
+                  <p>冲突时信谁：{conflict.selectedSource?.label ?? '需要人工确认'}。{conflict.reason}</p>
                 </article>
               ))}
             </div>
@@ -963,6 +1147,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const updateMaintenanceFormat = useWorkflowStore((state) => state.updateMaintenanceFormat)
   const blocking = hasBlockingErrors(issues)
+  const blockingIssues = issues.filter((issue) => issue.severity === 'error')
   const htmlDocs = useMemo(() => exportHtmlDocuments(workflow), [workflow])
   const markdownDocs = useMemo(() => exportMarkdownDocuments(workflow), [workflow])
   const [message, setMessage] = useState('')
@@ -992,7 +1177,8 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
       <div className="section-heading">
         <div>
           <span className="kicker">Export</span>
-          <h1 id="export-title">预览与导出</h1>
+          <h1 id="export-title">生成可复制的工作流包</h1>
+          <p>确认 ZIP 内每个文件的用途；有 Error 时必须先修复，不能绕过导出。</p>
         </div>
         <div className="inline-actions">
           <button type="button" className="button button-secondary" onClick={() => downloadText(JSON.stringify(workflow, null, 2), 'workflow.json')}>
@@ -1001,7 +1187,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
           </button>
           <button type="button" className="button button-primary" disabled={blocking || isExporting} onClick={() => void downloadZip()}>
             <Download size={16} aria-hidden="true" />
-            下载 ZIP
+            下载工作流包
           </button>
         </div>
       </div>
@@ -1010,16 +1196,17 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
         <label>
           主维护格式
           <select value={workflow.maintenanceFormat} onChange={(event) => updateMaintenanceFormat(event.currentTarget.value as MaintenanceFormat, workflow.secondaryFormat)}>
-            <option value="html">HTML</option>
-            <option value="markdown">Markdown</option>
+            <option value="html">{maintenanceFormatCopy.html.label}</option>
+            <option value="markdown">{maintenanceFormatCopy.markdown.label}</option>
           </select>
+          <small>{maintenanceFormatCopy[workflow.maintenanceFormat].detail}</small>
         </label>
         <label>
           次级格式
           <select value={workflow.secondaryFormat ?? ''} onChange={(event) => updateMaintenanceFormat(workflow.maintenanceFormat, event.currentTarget.value ? event.currentTarget.value as MaintenanceFormat : undefined)}>
             <option value="">不生成</option>
-            <option value="html">HTML</option>
-            <option value="markdown">Markdown</option>
+            <option value="html">{maintenanceFormatCopy.html.label}</option>
+            <option value="markdown">{maintenanceFormatCopy.markdown.label}</option>
           </select>
         </label>
         <div className={blocking ? 'export-gate blocked' : 'export-gate'}>
@@ -1030,14 +1217,34 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
 
       {message ? <p className="notice" aria-live="polite">{message}</p> : null}
 
+      {blockingIssues.length > 0 ? (
+        <section className="plain-panel blocked-summary" aria-live="polite">
+          <div className="section-heading compact">
+            <div>
+              <h2>需要先修复的阻塞项</h2>
+              <p>这些问题会阻止工作流包导出。请回到对应文档或字段处理后再下载。</p>
+            </div>
+          </div>
+          <div className="issue-list">
+            {blockingIssues.slice(0, 4).map((issue) => (
+              <article key={issue.id} className="issue issue-error">
+                <span>必须修复</span>
+                <strong>{issue.title}</strong>
+                <p>{issue.message}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <div className="split-panel">
         <section className="plain-panel">
           <h2>ZIP 文件结构</h2>
           <ul className="file-list">
-            <li>workflow.json</li>
-            <li>README.md</li>
-            {Object.keys(primaryDocs).map((filename) => <li key={filename}>documents/{filename}</li>)}
-            {workflow.secondaryFormat ? <li>documents-{workflow.secondaryFormat === 'html' ? 'html' : 'md'}/...</li> : null}
+            <li><code>workflow.json</code><span>完整结构，用于再次导入和继续编辑。</span></li>
+            <li><code>README.md</code><span>告诉接手者如何使用这套工作流。</span></li>
+            {Object.keys(primaryDocs).map((filename) => <li key={filename}><code>documents/{filename}</code><span>主维护格式文档，给未来模型直接阅读。</span></li>)}
+            {workflow.secondaryFormat ? <li><code>documents-{workflow.secondaryFormat === 'html' ? 'html' : 'md'}/...</code><span>次级格式备份。</span></li> : null}
           </ul>
         </section>
         <section className="plain-panel">
@@ -1054,11 +1261,14 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
   )
 }
 
-function RightPanel({ issues }: { issues: ValidationIssue[] }) {
+function InspectorPanel({ issues, onClose }: { issues: ValidationIssue[]; onClose: () => void }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const selectedDocumentId = useWorkflowStore((state) => state.selectedDocumentId)
   const selectedSectionId = useWorkflowStore((state) => state.selectedSectionId)
   const selectedFieldId = useWorkflowStore((state) => state.selectedFieldId)
+  const setActiveView = useWorkflowStore((state) => state.setActiveView)
+  const selectDocument = useWorkflowStore((state) => state.selectDocument)
+  const selectFieldAction = useWorkflowStore((state) => state.selectField)
   const acceptWarning = useWorkflowStore((state) => state.acceptWarning)
   const [showSuggestions, setShowSuggestions] = useState(true)
   const field = selectedField(workflow, selectedDocumentId, selectedSectionId, selectedFieldId)
@@ -1069,21 +1279,43 @@ function RightPanel({ issues }: { issues: ValidationIssue[] }) {
     .slice(0, 10)
   const errors = issues.filter((issue) => issue.severity === 'error').length
 
+  function goToIssue(issue: ValidationIssue) {
+    if (issue.target.documentId && issue.target.sectionId && issue.target.fieldId) {
+      selectFieldAction(issue.target.documentId, issue.target.sectionId, issue.target.fieldId)
+      return
+    }
+    if (issue.target.documentId) {
+      selectDocument(issue.target.documentId)
+      setActiveView('documents')
+      return
+    }
+    setActiveView(issue.target.ruleId ? 'rules' : 'overview')
+  }
+
   return (
     <aside className="right-panel" aria-label="属性、校验与预览">
+      <div className="inspector-top">
+        <div>
+          <span className="kicker">Inspector</span>
+          <strong>检查与修复</strong>
+        </div>
+        <button type="button" className="icon-button" aria-label="关闭检查器" onClick={onClose}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
       <section className="inspector">
         <div className="rail-heading">
-          <span>当前对象</span>
+          <span>当前字段</span>
           <Boxes size={16} aria-hidden="true" />
         </div>
         {field ? (
           <div className="inspector-field">
             <strong>{field.label}</strong>
             <p>{field.guidance}</p>
-            <small>{field.id} · {field.lifecycle} · {field.type}</small>
+            <small>{lifecycleCopy[field.lifecycle].label} · {fieldTypeCopy[field.type].label}</small>
           </div>
         ) : (
-          <p className="muted">选中文档字段后，这里显示模型编辑提示和值槽状态。</p>
+          <p className="muted">选中文档字段后，这里显示填写规则和当前内容状态。没有选中字段时，检查器只显示校验修复路径。</p>
         )}
       </section>
       <section className="inspector" aria-live="polite">
@@ -1103,9 +1335,17 @@ function RightPanel({ issues }: { issues: ValidationIssue[] }) {
               <span>{severityLabel(issue.severity)}</span>
               <strong>{issue.title}</strong>
               <p>{issue.message}</p>
+              {issue.severity === 'error' || issue.severity === 'warning' ? (
+                <p className="issue-help">
+                  {issue.severity === 'error' ? '这个问题会阻止工作流包导出。' : '这个问题可以接受风险，但会保留记录。'}
+                </p>
+              ) : null}
+              <button type="button" className="button button-secondary" onClick={() => goToIssue(issue)}>
+                去修复
+              </button>
               {issue.severity === 'warning' && issue.canAccept && !issue.accepted ? (
                 <button type="button" className="button button-ghost" onClick={() => acceptWarning(issue)}>
-                  接受 Warning
+                  接受风险并记录
                 </button>
               ) : null}
             </article>
@@ -1162,7 +1402,7 @@ function RelationshipGraph({ workflow, issues, activeDocumentIds = [] }: { workf
               <g key={node.document.id} transform={`translate(${node.x - 92} ${node.y - 36})`} className={hasError ? 'graph-node error' : active ? 'graph-node active' : 'graph-node'}>
                 <rect width="184" height="72" rx="12" />
                 <text x="16" y="27">{node.document.filename}</text>
-                <text x="16" y="50" className="graph-node-meta">{node.document.role} · {node.document.lifecycle}</text>
+                <text x="16" y="50" className="graph-node-meta">{documentRoleCopy[node.document.role].label} · {lifecycleCopy[node.document.lifecycle].label}</text>
               </g>
             )
           })}
@@ -1197,6 +1437,7 @@ function MainWorkspace({ issues }: { issues: ValidationIssue[] }) {
 function App() {
   const initialize = useWorkflowStore((state) => state.initialize)
   const workflow = useWorkflowStore((state) => state.workflow)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
   const issues = useMemo(() => validateWorkflow(workflow), [workflow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
 
@@ -1207,15 +1448,15 @@ function App() {
   }, [initialize])
 
   return (
-    <div className={workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'}>
-      <TopBar issueCount={errorCount} />
+    <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'}${inspectorOpen ? ' inspector-open' : ''}`}>
+      <TopBar issueCount={errorCount} onOpenInspector={() => setInspectorOpen(true)} />
       {workflow.readOnlyReason ? <div className="read-only-banner" role="status">{workflow.readOnlyReason}</div> : null}
       <div className="studio-layout">
         <LeftRail />
         <main id="main-workspace" className="main-workspace">
           <MainWorkspace issues={issues} />
         </main>
-        <RightPanel issues={issues} />
+        {inspectorOpen ? <InspectorPanel issues={issues} onClose={() => setInspectorOpen(false)} /> : null}
       </div>
     </div>
   )

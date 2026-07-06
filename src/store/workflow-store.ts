@@ -207,7 +207,7 @@ function newField(order: number): WorkflowField {
     id: newId('field'),
     label: `新字段 ${order}`,
     type: 'longText',
-    guidance: '保持说明常驻可见，只把具体内容写入值槽。',
+    guidance: '保持填写规则常驻可见，只把具体内容写入当前内容。',
     lifecycle: 'stable',
   })
 }
