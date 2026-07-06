@@ -258,6 +258,10 @@
   min-width: 0;
 }
 
+.view-label-short {
+  display: none;
+}
+
 .view-item span {
   font-weight: 650;
   text-wrap: pretty;
@@ -1180,6 +1184,14 @@ select:focus-visible,
 
   .view-item svg {
     margin: 0;
+  }
+
+  .view-label-full {
+    display: none;
+  }
+
+  .view-label-short {
+    display: inline;
   }
 
   .view-item span {

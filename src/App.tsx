@@ -362,9 +362,17 @@ function LeftRail() {
           {viewItems.map((view) => {
             const Icon = view.icon
             return (
-              <button key={view.id} type="button" className={activeView === view.id ? 'view-item active' : 'view-item'} onClick={() => setActiveView(view.id)}>
+              <button
+                key={view.id}
+                type="button"
+                className={activeView === view.id ? 'view-item active' : 'view-item'}
+                aria-label={`${view.label}：${view.detail}`}
+                title={`${view.label}：${view.detail}`}
+                onClick={() => setActiveView(view.id)}
+              >
                 <Icon size={16} aria-hidden="true" />
-                <span>{view.label}</span>
+                <span className="view-label-full">{view.label}</span>
+                <span className="view-label-short" aria-hidden="true">{view.shortLabel}</span>
                 <small>{view.detail}</small>
               </button>
             )
