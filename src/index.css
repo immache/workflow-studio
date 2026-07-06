@@ -1,0 +1,66 @@
+:root {
+  --bg: #f4f1ea;
+  --paper: #fffdf8;
+  --paper-soft: #eee9de;
+  --line: #e8e6dc;
+  --ink: #1a1915;
+  --muted: #6f6d66;
+  --accent: #d97757;
+  --accent-ink: #9b442e;
+  --button-bg: #8e3f27;
+  --focus: #b75a3e;
+  --serif: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+  --sans: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  color: var(--ink);
+  background: var(--bg);
+  font: 16px/1.62 var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100svh;
+  margin: 0;
+  background: var(--bg);
+}
+
+button,
+input,
+textarea,
+select {
+  letter-spacing: 0;
+}
+
+button,
+label,
+select,
+input,
+textarea {
+  font-family: var(--sans);
+}
+
+::selection {
+  background: #efd1c4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
