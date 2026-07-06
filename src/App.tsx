@@ -55,12 +55,63 @@ type UiCopy = {
   advanced?: boolean
 }
 
+type AppMode = 'home' | 'learn' | 'build' | 'advanced'
+type BuildStep = 0 | 1 | 2 | 3 | 4 | 5 | 6
+
 const viewItems: { id: AppView; label: string; shortLabel: string; detail: string; icon: typeof Layers3 }[] = [
   { id: 'overview', label: '当前工作流能不能交付', shortLabel: '能否交付', detail: '查看阻塞项、必填清单和下一步建议。', icon: Layers3 },
   { id: 'documents', label: '写给未来模型看的资料', shortLabel: '未来资料', detail: '维护文档、章节、字段和当前内容。', icon: FilePlus2 },
   { id: 'rules', label: '规定未来模型怎么读、怎么裁决', shortLabel: '读取裁决', detail: '设置读取顺序、来源信任顺序和冲突处理。', icon: GitBranch },
   { id: 'simulation', label: '演练断线后如何恢复', shortLabel: '恢复演练', detail: '模拟新会话、上下文压缩和目标冲突。', icon: Play },
   { id: 'export', label: '生成可复制的工作流包', shortLabel: '生成包', detail: '预览文件结构并下载工作流包。', icon: FileArchive },
+]
+
+const learnChapters = [
+  {
+    title: '工作流是什么',
+    question: '如果模型断线重开，它第一眼应该看哪里？',
+    answer: '工作流是一套接手说明。它告诉未来模型先读什么、如何确认当前目标、冲突时信谁，以及交付前怎样检查。',
+    example: '好写法：先读 AGENTS，再读状态，最后按需看历史。坏写法：把所有背景都堆在一个文件里。',
+  },
+  {
+    title: '好工作流的标准',
+    question: '怎样判断一套工作流是不是能交付？',
+    answer: '它应该可恢复、少重复、职责清楚、状态不过期、历史可追溯，并且有能实际执行的验证方式。',
+    example: '如果一个新会话只靠文档就能知道下一步做什么，这套工作流才算站得住。',
+  },
+  {
+    title: '常见材料分工',
+    question: '为什么不能只写一个总说明？',
+    answer: '不同信息会以不同速度变化。入口规则、长期计划、当前状态、用户偏好、历史和术语应该分开维护。',
+    example: '当前目标会变，放状态里；长期范围相对稳定，放计划里；已经替换的方案，放历史里。',
+  },
+  {
+    title: '字段怎么判断',
+    question: '看到一个字段时，我到底该写什么？',
+    answer: '先问四件事：这条信息给谁看、多久会变、缺了还能不能恢复、未来模型会用它判断什么。',
+    example: '“下一原子步骤”不是普通待办，而是恢复后可以立刻执行的唯一动作。',
+  },
+  {
+    title: '冲突时信谁',
+    question: '用户刚说的话和文档冲突时怎么办？',
+    answer: '默认优先相信最新明确用户指令，其次是新鲜工作区事实，再看状态、计划、偏好和历史。',
+    example: '用户刚要求改目标时，不要被旧状态文档覆盖；旧状态应更新或归档。',
+  },
+  {
+    title: '怎么验收和导出',
+    question: '完成后怎样知道它真的可用？',
+    answer: '至少跑一次恢复演练，修掉阻塞项，确认导出的 ZIP 里有 workflow.json、README 和主维护文档。',
+    example: '导出不是保存网页，而是生成能复制到项目里的工作流包。',
+  },
+]
+
+const materialChoices = [
+  { id: 'protocol', title: '入口规则', detail: '未来模型第一眼要读的恢复协议。', recommended: true },
+  { id: 'status', title: '当前状态', detail: '当前目标、下一步、阻塞和恢复指针。', recommended: true },
+  { id: 'memory', title: '历史演变', detail: '为什么走到现在、哪些方案已经替换。', recommended: true },
+  { id: 'plan', title: '长期计划', detail: '使命、范围、阶段和稳定约束。', recommended: false },
+  { id: 'preference', title: '用户偏好', detail: '长期稳定、会影响多数任务的偏好。', recommended: false },
+  { id: 'context', title: '术语解释', detail: '避免未来模型误解抽象概念。', recommended: false },
 ]
 
 const scenarioOptions = Object.keys(scenarioLabels) as SimulationScenario[]
@@ -235,7 +286,324 @@ function selectedField(workflow: WorkflowSchema, documentId: string, sectionId?:
     ?.fields.find((field) => field.id === fieldId)
 }
 
-function TopBar({ issueCount, onOpenInspector }: { issueCount: number; onOpenInspector: () => void }) {
+function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBuild: () => void; onAdvanced: () => void }) {
+  return (
+    <main className="onboarding-main" id="main-workspace">
+      <section className="home-hero" aria-labelledby="home-title">
+        <div className="home-copy">
+          <span className="kicker">Workflow Studio</span>
+          <h1 id="home-title">为未来接手项目的模型，留下一套清楚的工作流。</h1>
+          <p>先理解好工作流的判断标准，再一步步生成可复制到项目里的恢复文档包。这里不会把你直接丢进字段表单。</p>
+        </div>
+        <div className="home-proof" aria-label="本地工作方式">
+          <span>本地保存</span>
+          <span>可导出 ZIP</span>
+          <span>无后端上传</span>
+        </div>
+      </section>
+
+      <section className="home-entry-grid" aria-label="开始方式">
+        <article className="home-entry primary-entry">
+          <span className="kicker">先理解</span>
+          <h2>工作流入门</h2>
+          <p>适合第一次使用、不确定字段含义，或还不知道好工作流应该长什么样的人。</p>
+          <ul>
+            <li>理解工作流是什么。</li>
+            <li>看懂常见材料分工。</li>
+            <li>弄清字段、冲突和验收标准。</li>
+          </ul>
+          <button type="button" className="button button-primary" onClick={onLearn}>
+            进入工作流入门
+          </button>
+        </article>
+        <article className="home-entry">
+          <span className="kicker">开始产出</span>
+          <h2>工作流搭建</h2>
+          <p>适合已经有项目目标，想从预设、空白或已有文件开始生成工作流包的人。</p>
+          <ul>
+            <li>回答少量自然语言问题。</li>
+            <li>生成恢复材料和规则。</li>
+            <li>演练后导出工作流包。</li>
+          </ul>
+          <button type="button" className="button button-secondary" onClick={onBuild}>
+            开始搭建工作流
+          </button>
+        </article>
+      </section>
+
+      <section className="home-afterword">
+        <div>
+          <h2>已经熟悉这套结构？</h2>
+          <p>高级编辑仍然保留，用来手动调整文档、字段、规则、恢复演练和导出格式。</p>
+        </div>
+        <button type="button" className="button button-ghost" onClick={onAdvanced}>
+          打开高级编辑
+        </button>
+      </section>
+    </main>
+  )
+}
+
+function LearnPage({ onBuild }: { onBuild: () => void }) {
+  return (
+    <main className="onboarding-main learn-main" id="main-workspace">
+      <section className="editorial-hero" aria-labelledby="learn-title">
+        <span className="kicker">Workflow Primer</span>
+        <h1 id="learn-title">先弄懂工作流，再开始填内容。</h1>
+        <p>这些章节解释的是搭建时最容易卡住的概念。你不需要记住底层字段名，只要知道每份材料在恢复时承担什么职责。</p>
+      </section>
+      <section className="lesson-list" aria-label="工作流入门章节">
+        {learnChapters.map((chapter, index) => (
+          <article className="lesson-card" key={chapter.title}>
+            <span className="lesson-number">{String(index + 1).padStart(2, '0')}</span>
+            <div>
+              <h2>{chapter.title}</h2>
+              <p className="lesson-question">{chapter.question}</p>
+              <p>{chapter.answer}</p>
+              <p className="lesson-example">{chapter.example}</p>
+            </div>
+          </article>
+        ))}
+      </section>
+      <section className="learn-cta">
+        <div>
+          <h2>读完这些概念后，就可以开始搭建。</h2>
+          <p>搭建流程会继续用自然语言提问，并在需要时把你带回对应的入门章节。</p>
+        </div>
+        <button type="button" className="button button-primary" onClick={onBuild}>
+          去工作流搭建
+        </button>
+      </section>
+    </main>
+  )
+}
+
+function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced: () => void }) {
+  const workflow = useWorkflowStore((state) => state.workflow)
+  const createPresetProject = useWorkflowStore((state) => state.createPresetProject)
+  const createBlankProject = useWorkflowStore((state) => state.createBlankProject)
+  const updateWorkflowMeta = useWorkflowStore((state) => state.updateWorkflowMeta)
+  const updateFieldText = useWorkflowStore((state) => state.updateFieldText)
+  const setActiveView = useWorkflowStore((state) => state.setActiveView)
+  const [step, setStep] = useState<BuildStep>(0)
+  const [projectName, setProjectName] = useState(workflow.name)
+  const [recoveryRisk, setRecoveryRisk] = useState('目标、下一步和当前阻塞最容易丢失。')
+  const [firstAction, setFirstAction] = useState('读取 STATUS.html，确认下一原子步骤。')
+  const [selectedMaterials, setSelectedMaterials] = useState(() => new Set(materialChoices.filter((item) => item.recommended).map((item) => item.id)))
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [generatedMessage, setGeneratedMessage] = useState('')
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 })
+  }, [step])
+
+  async function handlePresetStart() {
+    setIsGenerating(true)
+    await createPresetProject()
+    setGeneratedMessage('已使用标准恢复文档作为起点。你可以继续确认材料组合。')
+    setStep(2)
+    setIsGenerating(false)
+  }
+
+  async function generateBlankScaffold() {
+    setIsGenerating(true)
+    await createBlankProject()
+    updateWorkflowMeta({
+      name: projectName.trim() || '新手工作流',
+      description: `恢复场景：${recoveryRisk.trim() || '需要未来模型接手当前项目。'} 恢复后第一动作：${firstAction.trim() || '确认下一步。'}`,
+    })
+    updateFieldText('protocol', 'recovery', 'recovery-order', 'AGENTS.md -> STATUS.html')
+    updateFieldText('blank-status', 'blank-anchor', 'blank-current-goal', projectName.trim() || '继续完善当前项目。')
+    updateFieldText('blank-status', 'blank-next-step-section', 'blank-next-atomic-step', firstAction.trim() || '读取当前状态并确认下一步。')
+    setGeneratedMessage('已生成最小可恢复工作流：入口规则、当前状态和下一原子步骤已经有了起点。')
+    setStep(2)
+    setIsGenerating(false)
+  }
+
+  function toggleMaterial(id: string) {
+    setSelectedMaterials((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function openAdvanced(view: AppView) {
+    setActiveView(view)
+    onAdvanced()
+  }
+
+  const steps = ['选择起点', '说明场景', '选择材料', '填写内容', '恢复顺序', '冲突处理', '演练导出']
+
+  return (
+    <main className="onboarding-main build-main" id="main-workspace">
+      <section className="build-shell" aria-labelledby="build-title">
+        <div className="build-head">
+          <span className="kicker">Workflow Builder</span>
+          <h1 id="build-title">一步步搭建工作流。</h1>
+          <p>每一步只处理一个问题。你看到的是项目判断，底层文档、字段和规则会在后台映射。</p>
+        </div>
+        <ol className="stepper" aria-label="搭建步骤">
+          {steps.map((label, index) => (
+            <li key={label} className={index === step ? 'active' : index < step ? 'done' : ''}>
+              <span>{index + 1}</span>
+              <strong>{label}</strong>
+            </li>
+          ))}
+        </ol>
+
+        <div className="builder-panel">
+          {step === 0 ? (
+            <section className="builder-step" aria-labelledby="start-title">
+              <span className="kicker">Step 1</span>
+              <h2 id="start-title">你想从哪里开始？</h2>
+              <p>不确定时建议先用标准工作流；如果你要从零设计，选择空白起点，系统会先帮你生成最小结构。</p>
+              <div className="start-grid">
+                <button type="button" className="start-card" onClick={() => void handlePresetStart()} disabled={isGenerating}>
+                  <strong>使用标准工作流</strong>
+                  <span>保留入口规则、状态、历史和术语等常见材料。</span>
+                </button>
+                <button type="button" className="start-card" onClick={() => setStep(1)} disabled={isGenerating}>
+                  <strong>从空白开始</strong>
+                  <span>先回答三个问题，再生成最小可恢复工作流。</span>
+                </button>
+                <button type="button" className="start-card" onClick={onLearn}>
+                  <strong>我还不确定</strong>
+                  <span>先去入门页理解材料分工和好工作流标准。</span>
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 1 ? (
+            <section className="builder-step" aria-labelledby="scenario-title">
+              <span className="kicker">Step 2</span>
+              <h2 id="scenario-title">先说明你的项目和恢复场景。</h2>
+              <p>这三项会写入工作流描述和状态材料，帮助未来模型知道自己接手的是什么。</p>
+              <div className="question-form">
+                <label>
+                  这个工作流服务哪个项目或任务？
+                  <input value={projectName} onChange={(event) => setProjectName(event.currentTarget.value)} />
+                </label>
+                <label>
+                  未来模型恢复时最容易丢失什么信息？
+                  <textarea rows={3} value={recoveryRisk} onChange={(event) => setRecoveryRisk(event.currentTarget.value)} />
+                </label>
+                <label>
+                  恢复后希望模型立刻做什么？
+                  <textarea rows={3} value={firstAction} onChange={(event) => setFirstAction(event.currentTarget.value)} />
+                </label>
+              </div>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => setStep(0)}>返回起点</button>
+                <button type="button" className="button button-primary" onClick={() => void generateBlankScaffold()} disabled={isGenerating}>
+                  生成最小工作流
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 2 ? (
+            <section className="builder-step" aria-labelledby="materials-title">
+              <span className="kicker">Step 3</span>
+              <h2 id="materials-title">需要留下哪些恢复材料？</h2>
+              <p>推荐材料已经选中。你可以先保持默认，之后再进入高级编辑补细节。</p>
+              {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
+              <div className="material-grid">
+                {materialChoices.map((item) => (
+                  <label key={item.id} className={selectedMaterials.has(item.id) ? 'material-card selected' : 'material-card'}>
+                    <input type="checkbox" checked={selectedMaterials.has(item.id)} onChange={() => toggleMaterial(item.id)} />
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => setStep(0)}>重新选择起点</button>
+                <button type="button" className="button button-primary" onClick={() => setStep(3)}>继续填写核心内容</button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 3 ? (
+            <section className="builder-step" aria-labelledby="content-title">
+              <span className="kicker">Step 4</span>
+              <h2 id="content-title">每份材料先填最关键的内容。</h2>
+              <p>这里不要求你理解字段类型。先确认未来模型必须知道的内容，细节可以稍后在高级编辑中调整。</p>
+              <div className="generated-summary">
+                {workflow.documents.map((document) => (
+                  <article key={document.id}>
+                    <strong>{document.title}</strong>
+                    <p>{document.description}</p>
+                  </article>
+                ))}
+              </div>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => openAdvanced('documents')}>打开材料细节</button>
+                <button type="button" className="button button-primary" onClick={() => setStep(4)}>继续规定恢复顺序</button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 4 ? (
+            <section className="builder-step" aria-labelledby="order-title">
+              <span className="kicker">Step 5</span>
+              <h2 id="order-title">未来模型先读什么，再读什么？</h2>
+              <p>默认顺序已经按恢复逻辑生成。只要能回答“断线重开后第一眼看哪里”，就可以继续。</p>
+              <ol className="read-order-list">
+                {workflow.rules.recoveryOrder.map((stepItem, index) => {
+                  const document = workflow.documents.find((item) => item.id === stepItem.documentId)
+                  return <li key={stepItem.id}><span>{index + 1}</span><strong>{document?.filename ?? '未知材料'}</strong><small>{stepItem.condition}</small></li>
+                })}
+              </ol>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => openAdvanced('rules')}>调整恢复顺序</button>
+                <button type="button" className="button button-primary" onClick={() => setStep(5)}>继续处理冲突</button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 5 ? (
+            <section className="builder-step" aria-labelledby="conflict-title">
+              <span className="kicker">Step 6</span>
+              <h2 id="conflict-title">信息冲突时，未来模型应该信谁？</h2>
+              <p>默认规则是先信最新明确用户指令，再信新鲜工作区事实。旧文档不是没用，但不能覆盖更高优先级的信息。</p>
+              <div className="conflict-example">
+                <strong>例子</strong>
+                <p>如果用户刚说“这次只改首页”，而旧状态文档写着“继续优化三栏”，未来模型应该听用户刚说的话，并更新状态文档。</p>
+              </div>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => openAdvanced('rules')}>查看冲突规则</button>
+                <button type="button" className="button button-primary" onClick={() => setStep(6)}>进入演练与导出</button>
+              </div>
+            </section>
+          ) : null}
+
+          {step === 6 ? (
+            <section className="builder-step" aria-labelledby="export-ready-title">
+              <span className="kicker">Step 7</span>
+              <h2 id="export-ready-title">最后做一次演练，然后导出。</h2>
+              <p>如果恢复演练能推出下一步，并且导出页没有阻塞项，这套工作流就可以交给项目使用。</p>
+              <div className="finish-grid">
+                <button type="button" className="finish-card" onClick={() => openAdvanced('simulation')}>
+                  <strong>运行恢复演练</strong>
+                  <span>模拟新会话、上下文压缩和目标冲突。</span>
+                </button>
+                <button type="button" className="finish-card" onClick={() => openAdvanced('export')}>
+                  <strong>生成工作流包</strong>
+                  <span>预览 README、workflow.json 和导出文档。</span>
+                </button>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </section>
+    </main>
+  )
+}
+
+function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCount: number; onOpenInspector: () => void; mode: AppMode; onModeChange: (mode: AppMode) => void }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const saveStatus = useWorkflowStore((state) => state.saveStatus)
   const storageMessage = useWorkflowStore((state) => state.storageMessage)
@@ -251,11 +619,19 @@ function TopBar({ issueCount, onOpenInspector }: { issueCount: number; onOpenIns
     if (!file) return
     try {
       await importProject(file)
+      onModeChange('advanced')
       setImportMessage(`已导入 ${file.name}`)
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : '导入失败。')
     }
   }
+
+  const modeItems: { id: AppMode; label: string }[] = [
+    { id: 'home', label: '首页' },
+    { id: 'learn', label: '工作流入门' },
+    { id: 'build', label: '工作流搭建' },
+    { id: 'advanced', label: '高级编辑' },
+  ]
 
   return (
     <header className="topbar">
@@ -264,17 +640,26 @@ function TopBar({ issueCount, onOpenInspector }: { issueCount: number; onOpenIns
         <span className="kicker">Workflow Studio</span>
         <strong>{workflow.name}</strong>
       </div>
-      <div className="topbar-status" aria-live="polite">
-        <span className={`save-dot save-dot-${saveStatus}`}></span>
-        <span>{statusLabel(saveStatus)}</span>
-        <span className="muted">{storageMessage}</span>
-        {issueCount > 0 ? <span className="status-pill">{issueCount} 个 Error</span> : <span className="status-pill status-pill-ok">可导出</span>}
-      </div>
+      <nav className="mode-nav" aria-label="页面入口">
+        {modeItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={mode === item.id ? 'mode-tab active' : 'mode-tab'}
+            aria-current={mode === item.id ? 'page' : undefined}
+            onClick={() => onModeChange(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
       <div className="topbar-actions">
-        <button type="button" className="button button-secondary" onClick={onOpenInspector}>
-          <PanelRightOpen size={16} aria-hidden="true" />
-          检查
-        </button>
+        {mode === 'advanced' ? (
+          <button type="button" className="button button-secondary" onClick={onOpenInspector}>
+            <PanelRightOpen size={16} aria-hidden="true" />
+            检查
+          </button>
+        ) : null}
         <button type="button" className="button button-secondary" onClick={() => fileInputRef.current?.click()}>
           <Import size={16} aria-hidden="true" />
           导入
@@ -296,6 +681,12 @@ function TopBar({ issueCount, onOpenInspector }: { issueCount: number; onOpenIns
             取消导入
           </button>
         ) : null}
+      </div>
+      <div className="topbar-status" aria-live="polite">
+        <span className={`save-dot save-dot-${saveStatus}`}></span>
+        <span>{statusLabel(saveStatus)}</span>
+        <span className="muted">{storageMessage}</span>
+        {issueCount > 0 ? <span className="status-pill">{issueCount} 个 Error</span> : <span className="status-pill status-pill-ok">可导出</span>}
       </div>
       {workflow.readOnlyReason ? <p className="topbar-message">{workflow.readOnlyReason}</p> : importMessage ? <p className="topbar-message">{importMessage}</p> : null}
     </header>
@@ -1445,6 +1836,7 @@ function MainWorkspace({ issues }: { issues: ValidationIssue[] }) {
 function App() {
   const initialize = useWorkflowStore((state) => state.initialize)
   const workflow = useWorkflowStore((state) => state.workflow)
+  const [mode, setMode] = useState<AppMode>('home')
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const issues = useMemo(() => validateWorkflow(workflow), [workflow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
@@ -1455,17 +1847,31 @@ function App() {
     void initialize()
   }, [initialize])
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 })
+  }, [mode])
+
+  function changeMode(nextMode: AppMode) {
+    setMode(nextMode)
+    if (nextMode !== 'advanced') setInspectorOpen(false)
+  }
+
   return (
-    <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'}${inspectorOpen ? ' inspector-open' : ''}`}>
-      <TopBar issueCount={errorCount} onOpenInspector={() => setInspectorOpen(true)} />
+    <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'}${mode === 'advanced' && inspectorOpen ? ' inspector-open' : ''}`}>
+      <TopBar issueCount={errorCount} onOpenInspector={() => setInspectorOpen(true)} mode={mode} onModeChange={changeMode} />
       {workflow.readOnlyReason ? <div className="read-only-banner" role="status">{workflow.readOnlyReason}</div> : null}
-      <div className="studio-layout">
-        <LeftRail />
-        <main id="main-workspace" className="main-workspace">
-          <MainWorkspace issues={issues} />
-        </main>
-        {inspectorOpen ? <InspectorPanel issues={issues} onClose={() => setInspectorOpen(false)} /> : null}
-      </div>
+      {mode === 'home' ? <HomePage onLearn={() => changeMode('learn')} onBuild={() => changeMode('build')} onAdvanced={() => changeMode('advanced')} /> : null}
+      {mode === 'learn' ? <LearnPage onBuild={() => changeMode('build')} /> : null}
+      {mode === 'build' ? <BuildWizard onLearn={() => changeMode('learn')} onAdvanced={() => changeMode('advanced')} /> : null}
+      {mode === 'advanced' ? (
+        <div className="studio-layout">
+          <LeftRail />
+          <main id="main-workspace" className="main-workspace">
+            <MainWorkspace issues={issues} />
+          </main>
+          {inspectorOpen ? <InspectorPanel issues={issues} onClose={() => setInspectorOpen(false)} /> : null}
+        </div>
+      ) : null}
     </div>
   )
 }

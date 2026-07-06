@@ -1,9 +1,56 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 
-test('supports the core workflow design path', async ({ page }) => {
+async function openAdvanced(page: Page) {
+  await page.getByRole('button', { name: '高级编辑', exact: true }).click()
+}
+
+test('starts from a beginner friendly home page with two primary entries', async ({ page }) => {
   await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: /为未来接手项目的模型/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '进入工作流入门' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '开始搭建工作流' })).toBeVisible()
+  await expect(page.getByText('关系图与恢复路径')).toBeHidden()
+
+  await page.getByRole('button', { name: '进入工作流入门' }).click()
+  await expect(page.getByRole('heading', { name: '先弄懂工作流，再开始填内容。' })).toBeVisible()
+  await expect(page.getByText('如果模型断线重开，它第一眼应该看哪里？')).toBeVisible()
+
+  await page.getByRole('button', { name: '去工作流搭建' }).click()
+  await expect(page.getByRole('heading', { name: '一步步搭建工作流。' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你想从哪里开始？' })).toBeVisible()
+})
+
+test('builds a minimal blank workflow through natural language questions', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: '开始搭建工作流' }).click()
+
+  const beginnerFlow = page.locator('.onboarding-main')
+  await expect(beginnerFlow).not.toContainText(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType/)
+
+  await page.getByRole('button', { name: /从空白开始/ }).click()
+  await page.getByLabel('这个工作流服务哪个项目或任务？').fill('资料整理项目')
+  await page.getByLabel('未来模型恢复时最容易丢失什么信息？').fill('当前目标、输入材料位置和用户最近确认的边界。')
+  await page.getByLabel('恢复后希望模型立刻做什么？').fill('先读取 STATUS.html，再检查下一原子步骤。')
+  await page.getByRole('button', { name: '生成最小工作流' }).click()
+
+  await expect(page.getByText('已生成最小可恢复工作流')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '需要留下哪些恢复材料？' })).toBeVisible()
+  await page.getByRole('button', { name: '继续填写核心内容' }).click()
+  await expect(page.getByRole('heading', { name: '每份材料先填最关键的内容。' })).toBeVisible()
+
+  await page.getByRole('button', { name: '打开材料细节' }).click()
+  await expect(page.getByRole('heading', { name: '写给未来模型看的资料' })).toBeVisible()
+  await page.getByRole('button', { name: /STATUS\.html/ }).click()
+  await expect(page.locator('[data-field="blank-current-goal"]').getByLabel('当前内容')).toHaveValue('资料整理项目')
+  await expect(page.locator('[data-field="blank-next-atomic-step"]').getByLabel('当前内容')).toHaveValue('先读取 STATUS.html，再检查下一原子步骤。')
+})
+
+test('supports the core advanced workflow design path', async ({ page }) => {
+  await page.goto('/')
+  await openAdvanced(page)
 
   await expect(page.getByRole('heading', { name: /当前工作流.*交付/ })).toBeVisible()
   await expect(page.getByRole('button', { name: '使用标准恢复文档' })).toBeVisible()
@@ -27,6 +74,7 @@ test('supports the core workflow design path', async ({ page }) => {
 
 test('creates a blank workflow, resolves validation error, switches format, and downloads ZIP', async ({ page }) => {
   await page.goto('/')
+  await openAdvanced(page)
   await page.getByRole('button', { name: '创建最小工作流' }).click()
 
   await page.getByRole('button', { name: /生成可复制的工作流包/ }).click()
@@ -57,6 +105,7 @@ test('creates a blank workflow, resolves validation error, switches format, and 
 
 test('supports advanced field validation, hidden suggestions, and delete confirmation', async ({ page }) => {
   await page.goto('/')
+  await openAdvanced(page)
   await page.getByRole('button', { name: /写给未来模型看的资料/ }).click()
 
   await page.getByLabel('当前内容').first().fill('短')
@@ -112,6 +161,7 @@ test('supports advanced field validation, hidden suggestions, and delete confirm
 
 test('keeps focus while editing source priority labels', async ({ page }) => {
   await page.goto('/')
+  await openAdvanced(page)
   await page.getByRole('button', { name: /规定未来模型怎么读/ }).click()
 
   const sourceName = page.getByLabel('显示名称').first()
