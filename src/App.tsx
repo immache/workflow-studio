@@ -72,36 +72,54 @@ const learnChapters = [
     question: '如果模型断线重开，它第一眼应该看哪里？',
     answer: '工作流是一套接手说明。它告诉未来模型先读什么、如何确认当前目标、冲突时信谁，以及交付前怎样检查。',
     example: '好写法：先读 AGENTS，再读状态，最后按需看历史。坏写法：把所有背景都堆在一个文件里。',
+    mistake: '常见误区：把工作流写成项目介绍，未来模型读完仍不知道下一步该做什么。',
+    help: '先把它想成接班说明。它不追求完整讲完项目，而是让未来模型在最短时间内恢复目标、边界和下一步。',
+    action: '去选择起点',
   },
   {
     title: '好工作流的标准',
     question: '怎样判断一套工作流是不是能交付？',
     answer: '它应该可恢复、少重复、职责清楚、状态不过期、历史可追溯，并且有能实际执行的验证方式。',
     example: '如果一个新会话只靠文档就能知道下一步做什么，这套工作流才算站得住。',
+    mistake: '常见误区：文档很多，但同一事实散落在多处，更新时不知道该改哪一个。',
+    help: '好工作流不是文件越多越好。每份材料只负责一种生命周期，当前事实替换当前事实，历史原因归入历史。',
+    action: '去说明项目',
   },
   {
     title: '常见材料分工',
     question: '为什么不能只写一个总说明？',
     answer: '不同信息会以不同速度变化。入口规则、长期计划、当前状态、用户偏好、历史和术语应该分开维护。',
     example: '当前目标会变，放状态里；长期范围相对稳定，放计划里；已经替换的方案，放历史里。',
+    mistake: '常见误区：把当前下一步写进长期计划，几天后计划看起来正式但已经过期。',
+    help: '判断材料时先看变化速度。会很快变的是状态，长期有效的是计划，只解释词义的是术语。',
+    action: '去选择材料',
   },
   {
     title: '字段怎么判断',
     question: '看到一个字段时，我到底该写什么？',
     answer: '先问四件事：这条信息给谁看、多久会变、缺了还能不能恢复、未来模型会用它判断什么。',
     example: '“下一原子步骤”不是普通待办，而是恢复后可以立刻执行的唯一动作。',
+    mistake: '常见误区：把字段当成填空题，能写多少写多少，最后反而让恢复路径变慢。',
+    help: '字段只保留会影响恢复或判断的信息。写入前问一句：未来模型会不会靠它决定下一步？',
+    action: '去填写核心内容',
   },
   {
     title: '冲突时信谁',
     question: '用户刚说的话和文档冲突时怎么办？',
     answer: '默认优先相信最新明确用户指令，其次是新鲜工作区事实，再看状态、计划、偏好和历史。',
     example: '用户刚要求改目标时，不要被旧状态文档覆盖；旧状态应更新或归档。',
+    mistake: '常见误区：把旧历史当成当前命令，导致模型沿着已经废弃的方案继续做。',
+    help: '冲突裁决要看来源和新鲜度。历史解释为什么变成现在，但不能覆盖最新目标。',
+    action: '去规定恢复顺序',
   },
   {
     title: '怎么验收和导出',
     question: '完成后怎样知道它真的可用？',
     answer: '至少跑一次恢复演练，修掉阻塞项，确认导出的 ZIP 里有 workflow.json、README 和主维护文档。',
     example: '导出不是保存网页，而是生成能复制到项目里的工作流包。',
+    mistake: '常见误区：只看页面没有红色错误，就直接导出；但未来模型可能仍不知道如何恢复。',
+    help: '验收要模拟真实恢复：假设新模型只拿到导出包，它能不能按入口规则找到状态、历史和下一步。',
+    action: '去演练并导出',
   },
 ]
 
@@ -361,6 +379,14 @@ function LearnPage({ onBuild }: { onBuild: () => void }) {
               <p className="lesson-question">{chapter.question}</p>
               <p>{chapter.answer}</p>
               <p className="lesson-example">{chapter.example}</p>
+              <p className="lesson-mistake">{chapter.mistake}</p>
+              <details className="lesson-help">
+                <summary>看不懂这里</summary>
+                <p>{chapter.help}</p>
+              </details>
+              <button type="button" className="button button-secondary lesson-action" onClick={onBuild}>
+                {chapter.action}
+              </button>
             </div>
           </article>
         ))}
@@ -1907,7 +1933,7 @@ function App() {
   }
 
   return (
-    <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'}${mode === 'advanced' && inspectorOpen ? ' inspector-open' : ''}`}>
+    <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'} mode-${mode}${mode === 'advanced' && inspectorOpen ? ' inspector-open' : ''}`}>
       <TopBar issueCount={errorCount} onOpenInspector={() => setInspectorOpen(true)} mode={mode} onModeChange={changeMode} />
       {workflow.readOnlyReason ? <div className="read-only-banner" role="status">{workflow.readOnlyReason}</div> : null}
       {mode === 'home' ? <HomePage onLearn={() => changeMode('learn')} onBuild={() => changeMode('build')} onAdvanced={() => changeMode('advanced')} /> : null}

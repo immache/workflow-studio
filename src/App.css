@@ -374,6 +374,34 @@
   border-left: 2px solid #dfc9bc;
 }
 
+.lesson-mistake {
+  color: var(--accent-ink) !important;
+}
+
+.lesson-help {
+  max-width: 760px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-soft);
+}
+
+.lesson-help summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.lesson-help p {
+  margin-top: 8px;
+}
+
+.lesson-action {
+  justify-self: start;
+  margin-top: 14px;
+}
+
 .build-main {
   max-width: 1180px;
 }
@@ -1841,11 +1869,40 @@ select:focus-visible,
     padding: 30px 16px 62px;
   }
 
+  .mode-home .topbar {
+    gap: 10px;
+  }
+
+  .mode-home .topbar-actions,
+  .mode-home .topbar-status {
+    display: none;
+  }
+
+  .mode-home .onboarding-main {
+    gap: 24px;
+    padding-top: 22px;
+  }
+
+  .mode-home .home-hero {
+    gap: 12px;
+    padding-bottom: 18px;
+  }
+
   .home-copy h1,
   .build-head h1,
   .learn-main .editorial-hero h1 {
     font-size: 36px;
     line-height: 1.04;
+  }
+
+  .mode-home .home-copy {
+    gap: 12px;
+  }
+
+  .mode-home .home-copy h1 {
+    max-width: 12em;
+    font-size: 32px;
+    line-height: 1.02;
   }
 
   .home-copy p,
@@ -1855,9 +1912,49 @@ select:focus-visible,
     font-size: 16px;
   }
 
+  .mode-home .home-copy p {
+    max-width: 30em;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .mode-home .home-proof {
+    display: none;
+  }
+
+  .mode-home .home-entry-grid {
+    gap: 12px;
+  }
+
+  .mode-home .home-entry {
+    gap: 12px;
+    padding: 18px;
+  }
+
   .home-entry h2,
   .learn-cta h2 {
     font-size: 28px;
+  }
+
+  .mode-home .home-entry h2 {
+    font-size: 24px;
+  }
+
+  .mode-home .home-entry p,
+  .mode-home .home-entry li {
+    line-height: 1.55;
+  }
+
+  .mode-home .home-entry ul {
+    display: none;
+  }
+
+  .mode-home .home-entry .button {
+    margin-top: 0;
+  }
+
+  .mode-home .home-afterword {
+    margin-top: 6px;
   }
 
   .lesson-card {
