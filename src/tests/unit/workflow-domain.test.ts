@@ -46,7 +46,21 @@ describe('Workflow Studio domain model', () => {
     const workflow = createBlankWorkflow()
     const issues = validateWorkflow(workflow)
 
+    expect(workflow.documents.map((document) => document.filename)).toEqual(['AGENTS.md', 'STATUS.html', 'MEMORY.html'])
     expect(issues.some((issue) => issue.severity === 'error')).toBe(true)
+  })
+
+  it('generates optional blank workflow materials from selections', () => {
+    const workflow = createBlankWorkflow(['plan', 'context'])
+
+    expect(workflow.documents.map((document) => document.filename)).toEqual([
+      'AGENTS.md',
+      'SPEC.html',
+      'STATUS.html',
+      'MEMORY.html',
+      'CONTEXT.html',
+    ])
+    expect(workflow.rules.recoveryOrder.map((step) => step.documentId)).toEqual(['protocol', 'blank-plan', 'blank-status', 'memory', 'blank-context'])
   })
 
   it('allows blank workflows to export after required recovery fields are filled', async () => {
@@ -65,6 +79,7 @@ describe('Workflow Studio domain model', () => {
         'workflow.json': expect.any(String),
         'documents/AGENTS.html': expect.any(String),
         'documents/STATUS.html': expect.any(String),
+        'documents/MEMORY.html': expect.any(String),
       }),
     })
   })
@@ -72,11 +87,18 @@ describe('Workflow Studio domain model', () => {
   it('keeps empty repeatable fields as list values in the editable store', async () => {
     await useWorkflowStore.getState().createBlankProject()
     const workflow = useWorkflowStore.getState().workflow
-    const field = workflow.documents[0].sections[0].fields[0]
+    const document = workflow.documents.find((candidate) => candidate.id === 'blank-status')
+    const section = document?.sections.find((candidate) => candidate.id === 'blank-anchor')
+    const field = section?.fields.find((candidate) => candidate.id === 'blank-work-entry')
+    if (!document || !section || !field) throw new Error('missing blank status fixture')
 
-    useWorkflowStore.getState().updateField(workflow.documents[0].id, workflow.documents[0].sections[0].id, field.id, { repeatable: true })
+    useWorkflowStore.getState().updateField(document.id, section.id, field.id, { repeatable: true })
 
-    const updatedField = useWorkflowStore.getState().workflow.documents[0].sections[0].fields[0]
+    const updatedField = useWorkflowStore.getState().workflow.documents
+      .find((candidate) => candidate.id === document.id)
+      ?.sections.find((candidate) => candidate.id === section.id)
+      ?.fields.find((candidate) => candidate.id === field.id)
+    if (!updatedField) throw new Error('missing updated field')
     expect(updatedField.repeatable).toBe(true)
     expect(updatedField.value.kind).toBe('list')
     if (updatedField.value.kind === 'list') {

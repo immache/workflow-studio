@@ -106,12 +106,12 @@ const learnChapters = [
 ]
 
 const materialChoices = [
-  { id: 'protocol', title: '入口规则', detail: '未来模型第一眼要读的恢复协议。', recommended: true },
-  { id: 'status', title: '当前状态', detail: '当前目标、下一步、阻塞和恢复指针。', recommended: true },
-  { id: 'memory', title: '历史演变', detail: '为什么走到现在、哪些方案已经替换。', recommended: true },
-  { id: 'plan', title: '长期计划', detail: '使命、范围、阶段和稳定约束。', recommended: false },
-  { id: 'preference', title: '用户偏好', detail: '长期稳定、会影响多数任务的偏好。', recommended: false },
-  { id: 'context', title: '术语解释', detail: '避免未来模型误解抽象概念。', recommended: false },
+  { id: 'protocol', title: '入口规则', detail: '未来模型第一眼要读的恢复协议。', recommended: true, required: true },
+  { id: 'status', title: '当前状态', detail: '当前目标、下一步、阻塞和恢复指针。', recommended: true, required: true },
+  { id: 'memory', title: '历史演变', detail: '为什么走到现在、哪些方案已经替换。', recommended: true, required: true },
+  { id: 'plan', title: '长期计划', detail: '使命、范围、阶段和稳定约束。', recommended: false, required: false },
+  { id: 'preference', title: '用户偏好', detail: '长期稳定、会影响多数任务的偏好。', recommended: false, required: false },
+  { id: 'context', title: '术语解释', detail: '避免未来模型误解抽象概念。', recommended: false, required: false },
 ]
 
 const scenarioOptions = Object.keys(scenarioLabels) as SimulationScenario[]
@@ -382,16 +382,19 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
   const workflow = useWorkflowStore((state) => state.workflow)
   const createPresetProject = useWorkflowStore((state) => state.createPresetProject)
   const createBlankProject = useWorkflowStore((state) => state.createBlankProject)
+  const importProject = useWorkflowStore((state) => state.importProject)
   const updateWorkflowMeta = useWorkflowStore((state) => state.updateWorkflowMeta)
   const updateFieldText = useWorkflowStore((state) => state.updateFieldText)
   const setActiveView = useWorkflowStore((state) => state.setActiveView)
   const [step, setStep] = useState<BuildStep>(0)
+  const [startMode, setStartMode] = useState<'preset' | 'blank' | 'import' | undefined>()
   const [projectName, setProjectName] = useState(workflow.name)
   const [recoveryRisk, setRecoveryRisk] = useState('目标、下一步和当前阻塞最容易丢失。')
   const [firstAction, setFirstAction] = useState('读取 STATUS.html，确认下一原子步骤。')
   const [selectedMaterials, setSelectedMaterials] = useState(() => new Set(materialChoices.filter((item) => item.recommended).map((item) => item.id)))
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 })
@@ -400,33 +403,69 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
   async function handlePresetStart() {
     setIsGenerating(true)
     await createPresetProject()
+    setStartMode('preset')
+    setSelectedMaterials(new Set(materialChoices.map((item) => item.id)))
     setGeneratedMessage('已使用标准恢复文档作为起点。你可以继续确认材料组合。')
     setStep(2)
     setIsGenerating(false)
   }
 
-  async function generateBlankScaffold() {
-    setIsGenerating(true)
-    await createBlankProject()
+  function selectedMaterialIds() {
+    return materialChoices.filter((item) => selectedMaterials.has(item.id)).map((item) => item.id)
+  }
+
+  function fillBlankScaffoldFields() {
     updateWorkflowMeta({
       name: projectName.trim() || '新手工作流',
       description: `恢复场景：${recoveryRisk.trim() || '需要未来模型接手当前项目。'} 恢复后第一动作：${firstAction.trim() || '确认下一步。'}`,
     })
-    updateFieldText('protocol', 'recovery', 'recovery-order', 'AGENTS.md -> STATUS.html')
     updateFieldText('blank-status', 'blank-anchor', 'blank-current-goal', projectName.trim() || '继续完善当前项目。')
     updateFieldText('blank-status', 'blank-next-step-section', 'blank-next-atomic-step', firstAction.trim() || '读取当前状态并确认下一步。')
-    setGeneratedMessage('已生成最小可恢复工作流：入口规则、当前状态和下一原子步骤已经有了起点。')
-    setStep(2)
+  }
+
+  async function generateBlankScaffold(nextStep: BuildStep = 2) {
+    setIsGenerating(true)
+    await createBlankProject(selectedMaterialIds())
+    fillBlankScaffoldFields()
+    setStartMode('blank')
+    setGeneratedMessage('已生成最小可恢复工作流：入口规则、当前状态和历史演变已经有了起点。')
+    setStep(nextStep)
     setIsGenerating(false)
   }
 
+  async function handleImportStart(file: File | undefined) {
+    if (!file) return
+    setIsGenerating(true)
+    try {
+      await importProject(file)
+      setStartMode('import')
+      setSelectedMaterials(new Set(materialChoices.filter((item) => item.required).map((item) => item.id)))
+      setGeneratedMessage(`已导入 ${file.name}。你可以先查看材料摘要，再进入高级编辑调整。`)
+      setStep(3)
+    } catch (error) {
+      setGeneratedMessage(error instanceof Error ? error.message : '导入失败，请检查文件格式。')
+    } finally {
+      setIsGenerating(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
   function toggleMaterial(id: string) {
+    if (materialChoices.find((item) => item.id === id)?.required) return
     setSelectedMaterials((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+  }
+
+  async function continueAfterMaterials() {
+    if (startMode === 'blank') {
+      await generateBlankScaffold(3)
+      return
+    }
+    setStep(3)
   }
 
   function openAdvanced(view: AppView) {
@@ -468,11 +507,22 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                   <strong>从空白开始</strong>
                   <span>先回答三个问题，再生成最小可恢复工作流。</span>
                 </button>
-                <button type="button" className="start-card" onClick={onLearn}>
-                  <strong>我还不确定</strong>
-                  <span>先去入门页理解材料分工和好工作流标准。</span>
+                <button type="button" className="start-card" onClick={() => importInputRef.current?.click()} disabled={isGenerating}>
+                  <strong>导入已有包</strong>
+                  <span>从 workflow.json 或 ZIP 继续调整已有工作流。</span>
                 </button>
               </div>
+              <input
+                ref={importInputRef}
+                className="visually-hidden"
+                type="file"
+                tabIndex={-1}
+                accept=".json,.zip,application/json,application/zip"
+                onChange={(event) => void handleImportStart(event.currentTarget.files?.[0])}
+              />
+              <button type="button" className="button button-ghost" onClick={onLearn}>
+                我还不确定，先去入门页
+              </button>
             </section>
           ) : null}
 
@@ -513,15 +563,15 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
               <div className="material-grid">
                 {materialChoices.map((item) => (
                   <label key={item.id} className={selectedMaterials.has(item.id) ? 'material-card selected' : 'material-card'}>
-                    <input type="checkbox" checked={selectedMaterials.has(item.id)} onChange={() => toggleMaterial(item.id)} />
-                    <strong>{item.title}</strong>
+                    <input type="checkbox" checked={selectedMaterials.has(item.id)} disabled={item.required} onChange={() => toggleMaterial(item.id)} />
+                    <strong>{item.title}{item.required ? <em>必要</em> : null}</strong>
                     <span>{item.detail}</span>
                   </label>
                 ))}
               </div>
               <div className="builder-actions">
                 <button type="button" className="button button-secondary" onClick={() => setStep(0)}>重新选择起点</button>
-                <button type="button" className="button button-primary" onClick={() => setStep(3)}>继续填写核心内容</button>
+                <button type="button" className="button button-primary" onClick={() => void continueAfterMaterials()} disabled={isGenerating}>继续填写核心内容</button>
               </div>
             </section>
           ) : null}

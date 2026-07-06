@@ -13,6 +13,22 @@ import {
 
 const now = () => new Date().toISOString()
 
+export type BlankMaterialId = 'protocol' | 'status' | 'memory' | 'plan' | 'preference' | 'context'
+
+const blankMaterialOrder: BlankMaterialId[] = ['protocol', 'plan', 'status', 'preference', 'memory', 'context']
+const defaultBlankMaterialIds: BlankMaterialId[] = ['protocol', 'status', 'memory']
+const blankMaterialSet = new Set<BlankMaterialId>(blankMaterialOrder)
+
+export function normalizeBlankMaterialIds(materialIds?: Iterable<string>): BlankMaterialId[] {
+  const selected = new Set<BlankMaterialId>(defaultBlankMaterialIds)
+  if (materialIds) {
+    for (const materialId of materialIds) {
+      if (blankMaterialSet.has(materialId as BlankMaterialId)) selected.add(materialId as BlankMaterialId)
+    }
+  }
+  return blankMaterialOrder.filter((materialId) => selected.has(materialId))
+}
+
 function section(
   id: string,
   title: string,
@@ -48,6 +64,117 @@ function document(input: {
       staleInfoHandling: input.lifecycle === 'historical' ? 'archive' : 'remove',
     },
   }
+}
+
+export function createBlankMaterialDocument(materialId: BlankMaterialId, order: number): WorkflowDocument {
+  if (materialId === 'protocol') {
+    return document({
+      id: 'protocol',
+      filename: 'AGENTS.md',
+      title: '工作流协议',
+      role: 'protocol',
+      lifecycle: 'mixed',
+      description: '恢复入口和协议说明。',
+      order,
+      sections: [
+        section('recovery', '恢复路径', '定义恢复读取顺序。', 'validation', 1, [
+          createField({ id: 'recovery-order', label: '恢复顺序', guidance: '至少说明恢复入口。', lifecycle: 'validation', required: true }),
+        ]),
+      ],
+    })
+  }
+  if (materialId === 'status') {
+    return document({
+      id: 'blank-status',
+      filename: 'STATUS.html',
+      title: '状态快照',
+      role: 'status',
+      lifecycle: 'realtime',
+      description: '当前状态、工作入口、下一原子步骤和阻塞确认。',
+      order,
+      sections: [
+        section('blank-anchor', '项目锚点', '记录工作入口和当前目标。', 'realtime', 1, [
+          createField({ id: 'blank-work-entry', label: '工作入口', guidance: '允许项目根、worktree、子目录、远端或容器路径。', lifecycle: 'realtime' }),
+          createField({ id: 'blank-current-goal', label: '当前目标', guidance: '记录当前仍有效目标。', lifecycle: 'realtime' }),
+        ]),
+        section('blank-next-step-section', '下一原子步骤', '恢复后唯一具体入口。', 'realtime', 2, [
+          createField({ id: 'blank-next-atomic-step', label: '下一原子步骤', guidance: '唯一、具体、可执行。', lifecycle: 'realtime', required: true }),
+        ]),
+      ],
+    })
+  }
+  if (materialId === 'memory') {
+    return document({
+      id: 'memory',
+      filename: 'MEMORY.html',
+      title: '历史演变',
+      role: 'history',
+      lifecycle: 'historical',
+      description: '项目演变、废弃方案、替代关系和关键证据。',
+      order,
+      sections: [
+        section('memory-usage-section', '使用方式', '说明 MEMORY 只用于理解演变，不判断当前状态。', 'historical', 1, [
+          createField({ id: 'memory-usage', label: '使用方式', guidance: '恢复时先读索引，再按关键词选择时间线。', lifecycle: 'historical' }),
+        ]),
+        section('memory-index', '记忆索引', '记录可检索关键词和条目状态。', 'historical', 2, [
+          createField({ id: 'memory-index-field', label: '索引条目', guidance: '新增、改名或改状态时同步维护索引。', lifecycle: 'historical' }),
+        ]),
+        section('timeline', '演变时间线', '记录仍有效参考或已失效归档。', 'historical', 3, [
+          createField({ id: 'history-entry-template', label: '历史条目模板', guidance: '包含状态、关键词、事件、原因、当前结果和证据。', lifecycle: 'historical' }),
+        ]),
+        section('memory-rules', '维护规则', '说明历史追加、归档和替代关系。', 'historical', 4, [
+          createField({ id: 'memory-maintenance', label: '维护规则', guidance: '旧条目不删除；失效后标为已失效归档并写清替代关系。', lifecycle: 'historical' }),
+        ]),
+      ],
+    })
+  }
+  if (materialId === 'plan') {
+    return document({
+      id: 'blank-plan',
+      filename: 'SPEC.html',
+      title: '长期计划',
+      role: 'plan',
+      lifecycle: 'stable',
+      description: '使命、范围、阶段和稳定约束。',
+      order,
+      sections: [
+        section('blank-plan-core', '计划边界', '记录长期目标、范围和稳定约束。', 'stable', 1, [
+          createField({ id: 'blank-plan-mission', label: '长期目标', guidance: '写清这套工作流长期服务什么项目或任务。', lifecycle: 'stable' }),
+          createField({ id: 'blank-plan-boundaries', label: '范围边界', guidance: '写清哪些事情属于本工作流，哪些不属于。', lifecycle: 'stable' }),
+        ]),
+      ],
+    })
+  }
+  if (materialId === 'preference') {
+    return document({
+      id: 'blank-preference',
+      filename: 'USER.html',
+      title: '用户偏好',
+      role: 'preference',
+      lifecycle: 'preference',
+      description: '长期稳定、会影响多数任务的用户偏好。',
+      order,
+      sections: [
+        section('blank-preference-core', '稳定偏好', '只记录长期稳定偏好，不记录一次性要求。', 'preference', 1, [
+          createField({ id: 'blank-collaboration-preference', label: '协作偏好', guidance: '记录用户明确表达或反复确认的协作方式。', lifecycle: 'preference' }),
+        ]),
+      ],
+    })
+  }
+  return document({
+    id: 'blank-context',
+    filename: 'CONTEXT.html',
+    title: '术语解释',
+    role: 'context',
+    lifecycle: 'reference',
+    description: '术语含义、边界和例子。',
+    order,
+    sections: [
+      section('blank-context-core', '术语条目', '解释未来模型容易误解的抽象概念。', 'reference', 1, [
+        createField({ id: 'blank-term-explanation', label: '术语解释', guidance: '写清含义、不等于什么、归属和例子。', lifecycle: 'reference' }),
+      ]),
+    ],
+  })
 }
 
 export function createCurrentStandardWorkflow(): WorkflowSchema {
@@ -351,8 +478,15 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
   }
 }
 
-export function createBlankWorkflow(): WorkflowSchema {
+export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSchema {
   const createdAt = now()
+  const documents = normalizeBlankMaterialIds(materialIds).map((materialId, index) => createBlankMaterialDocument(materialId, index + 1))
+  const recoveryText = documents.map((documentItem) => documentItem.filename).join(' -> ')
+  const recoveryField = documents
+    .find((documentItem) => documentItem.id === 'protocol')
+    ?.sections.find((sectionItem) => sectionItem.id === 'recovery')
+    ?.fields.find((field) => field.id === 'recovery-order')
+  if (recoveryField) recoveryField.value = scalarValue(recoveryText)
   return {
     schemaVersion: SCHEMA_VERSION,
     workflowId: `workflow-${Date.now()}`,
@@ -361,49 +495,23 @@ export function createBlankWorkflow(): WorkflowSchema {
     createdAt,
     updatedAt: createdAt,
     maintenanceFormat: 'html',
-    documents: [
-      document({
-        id: 'protocol',
-        filename: 'AGENTS.md',
-        title: '工作流协议',
-        role: 'protocol',
-        lifecycle: 'mixed',
-        description: '恢复入口和协议说明。',
-        order: 1,
-        sections: [
-          section('recovery', '恢复路径', '定义恢复读取顺序。', 'validation', 1, [
-            createField({ id: 'recovery-order', label: '恢复顺序', guidance: '至少说明恢复入口。', lifecycle: 'validation', required: true }),
-          ]),
-        ],
-      }),
-      document({
-        id: 'blank-status',
-        filename: 'STATUS.html',
-        title: '状态快照',
-        role: 'status',
-        lifecycle: 'realtime',
-        description: '当前状态、工作入口、下一原子步骤和阻塞确认。',
-        order: 2,
-        sections: [
-          section('blank-anchor', '项目锚点', '记录工作入口和当前目标。', 'realtime', 1, [
-            createField({ id: 'blank-work-entry', label: '工作入口', guidance: '允许项目根、worktree、子目录、远端或容器路径。', lifecycle: 'realtime' }),
-            createField({ id: 'blank-current-goal', label: '当前目标', guidance: '记录当前仍有效目标。', lifecycle: 'realtime' }),
-          ]),
-          section('blank-next-step-section', '下一原子步骤', '恢复后唯一具体入口。', 'realtime', 2, [
-            createField({ id: 'blank-next-atomic-step', label: '下一原子步骤', guidance: '唯一、具体、可执行。', lifecycle: 'realtime', required: true }),
-          ]),
-        ],
-      }),
-    ],
+    documents,
     rules: {
-      recoveryOrder: [
-        { id: 'recovery-protocol', documentId: 'protocol', condition: '恢复时读取', required: true, fallbackStepIds: [] },
-        { id: 'recovery-blank-status', documentId: 'blank-status', condition: '恢复当前状态和下一步时读取', required: true, fallbackStepIds: [] },
-      ],
+      recoveryOrder: documents.map((documentItem) => ({
+        id: `recovery-${documentItem.id}`,
+        documentId: documentItem.id,
+        condition: documentItem.role === 'history' ? '理解项目演变时读取' : '恢复时读取',
+        required: documentItem.role !== 'context',
+        fallbackStepIds: [],
+      })),
       sourcePriority: [],
       updateTriggers: [
-        { id: 'trigger-protocol', targetDocumentId: 'protocol', trigger: '协议规则变化', requiredAction: '更新 AGENTS.md' },
-        { id: 'trigger-blank-status', targetDocumentId: 'blank-status', trigger: '当前状态变化', requiredAction: '替换 STATUS.html 中失效状态' },
+        ...documents.map((documentItem) => ({
+          id: `trigger-${documentItem.id}`,
+          targetDocumentId: documentItem.id,
+          trigger: `${documentItem.title}职责范围内信息变化`,
+          requiredAction: documentItem.lifecycle === 'historical' ? `追加或归档 ${documentItem.filename}` : `更新 ${documentItem.filename}`,
+        })),
       ],
       completionChecks: [],
       conflictPolicy: {

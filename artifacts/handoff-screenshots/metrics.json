@@ -1,0 +1,146 @@
+[
+  {
+    "label": "desktop:home",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 2
+  },
+  {
+    "label": "desktop:learn",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "desktop:build-start",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "desktop:build-generated",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "desktop:advanced-documents",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "desktop:export",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "tablet:home",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 2
+  },
+  {
+    "label": "tablet:learn",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "tablet:build-start",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "tablet:build-generated",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "tablet:advanced-documents",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "tablet:export",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "mobile:home",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 2
+  },
+  {
+    "label": "mobile:learn",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "mobile:build-start",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "mobile:build-generated",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "mobile:advanced-documents",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  },
+  {
+    "label": "mobile:export",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0
+  }
+]

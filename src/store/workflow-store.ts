@@ -57,7 +57,7 @@ type WorkflowStore = {
   selectDocument: (documentId: string) => void
   selectField: (documentId: string, sectionId: string, fieldId: string) => void
   createPresetProject: () => Promise<void>
-  createBlankProject: () => Promise<void>
+  createBlankProject: (materialIds?: Iterable<string>) => Promise<void>
   duplicateCurrentProject: () => Promise<void>
   openProject: (id: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
@@ -293,8 +293,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ workflow, selectedDocumentId: selectedDocumentIdFor(workflow), selectedSectionId: undefined, selectedFieldId: undefined })
     await get().saveCurrent()
   },
-  createBlankProject: async () => {
-    const workflow = createBlankWorkflow()
+  createBlankProject: async (materialIds) => {
+    const workflow = createBlankWorkflow(materialIds)
     set({ workflow, selectedDocumentId: selectedDocumentIdFor(workflow), selectedSectionId: undefined, selectedFieldId: undefined })
     await get().saveCurrent()
   },

@@ -21,6 +21,7 @@ test('starts from a beginner friendly home page with two primary entries', async
   await page.getByRole('button', { name: '去工作流搭建' }).click()
   await expect(page.getByRole('heading', { name: '一步步搭建工作流。' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '你想从哪里开始？' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /导入已有包/ })).toBeVisible()
 })
 
 test('builds a minimal blank workflow through natural language questions', async ({ page }) => {
@@ -38,11 +39,17 @@ test('builds a minimal blank workflow through natural language questions', async
 
   await expect(page.getByText('已生成最小可恢复工作流')).toBeVisible()
   await expect(page.getByRole('heading', { name: '需要留下哪些恢复材料？' })).toBeVisible()
+  await expect(page.getByText('历史演变').first()).toBeVisible()
+  await page.getByLabel(/长期计划/).check()
   await page.getByRole('button', { name: '继续填写核心内容' }).click()
   await expect(page.getByRole('heading', { name: '每份材料先填最关键的内容。' })).toBeVisible()
+  await expect(page.getByText('历史演变')).toBeVisible()
+  await expect(page.getByText('长期计划')).toBeVisible()
 
   await page.getByRole('button', { name: '打开材料细节' }).click()
   await expect(page.getByRole('heading', { name: '写给未来模型看的资料' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /MEMORY\.html/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /SPEC\.html/ })).toBeVisible()
   await page.getByRole('button', { name: /STATUS\.html/ }).click()
   await expect(page.locator('[data-field="blank-current-goal"]').getByLabel('当前内容')).toHaveValue('资料整理项目')
   await expect(page.locator('[data-field="blank-next-atomic-step"]').getByLabel('当前内容')).toHaveValue('先读取 STATUS.html，再检查下一原子步骤。')
@@ -101,6 +108,7 @@ test('creates a blank workflow, resolves validation error, switches format, and 
   expect(zip.file('README.md')).toBeTruthy()
   expect(zip.file('documents/AGENTS.md')).toBeTruthy()
   expect(zip.file('documents/STATUS.md')).toBeTruthy()
+  expect(zip.file('documents/MEMORY.md')).toBeTruthy()
 })
 
 test('supports advanced field validation, hidden suggestions, and delete confirmation', async ({ page }) => {

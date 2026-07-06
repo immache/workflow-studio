@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
+    "screenshots:handoff": "node scripts/capture-handoff-screenshots.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },
