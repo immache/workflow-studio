@@ -17,6 +17,14 @@ async function metrics(page, label) {
     const onboarding = document.querySelector('.onboarding-main')
     const rawTerms = onboarding?.innerText.match(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType|sourcePriority/g) ?? []
     const writeMapVisible = Boolean(document.querySelector('.write-map'))
+    const moduleWorkbench = document.querySelector('.module-workbench')
+    const moduleWorkbenchColumns = moduleWorkbench
+      ? getComputedStyle(moduleWorkbench).gridTemplateColumns.split(' ').filter(Boolean).length
+      : 0
+    const documentTabRow = document.querySelector('.document-tab-row')
+    const documentTabColumns = documentTabRow
+      ? getComputedStyle(documentTabRow).gridTemplateColumns.split(' ').filter(Boolean).length
+      : 0
     return {
       label: currentLabel,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
@@ -26,6 +34,8 @@ async function metrics(page, label) {
       homePrimaryEntries: document.querySelectorAll('.home-entry .button').length,
       writeMapVisible,
       protocolMapVisible: document.body.innerText.includes('协议地图'),
+      moduleWorkbenchColumns,
+      documentTabColumns,
     }
   }, label)
 }
@@ -95,6 +105,9 @@ const failures = allMetrics.filter((item) =>
   item.horizontalOverflow > 0 ||
   item.onboardingRawTerms.length > 0 ||
   item.protocolMapVisible ||
+  (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.moduleWorkbenchColumns > 2) ||
+  (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.documentTabColumns > 2) ||
+  (item.label.startsWith('mobile:module-canvas') && item.documentTabColumns > 1) ||
   (
     ['document-selection', 'module-canvas', 'agents-draft-review'].some((state) => item.label.endsWith(state)) &&
     !item.writeMapVisible

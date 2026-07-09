@@ -81,6 +81,8 @@ type WorkflowStore = {
   addSection: (documentId: string) => void
   addSectionFromModule: (documentId: string, moduleId: string) => void
   updateSection: (documentId: string, sectionId: string, patch: Partial<Pick<WorkflowSection, 'title' | 'purpose' | 'lifecycle'>>) => void
+  duplicateSection: (documentId: string, sectionId: string) => void
+  moveSection: (documentId: string, sectionId: string, direction: -1 | 1) => void
   removeSection: (documentId: string, sectionId: string) => void
   addField: (documentId: string, sectionId: string) => void
   addFieldFromModule: (documentId: string, sectionId: string, moduleId: string) => void
@@ -222,6 +224,38 @@ function newField(order: number): WorkflowField {
     guidance: '保持填写规则常驻可见，只把具体内容写入当前内容。',
     lifecycle: 'stable',
   })
+}
+
+function cloneFieldValue(value: FieldValue): FieldValue {
+  if (value.kind === 'empty') return { kind: 'empty' }
+  if (value.kind === 'scalar') return { kind: 'scalar', value: value.value }
+  if (value.kind === 'reference') return { kind: 'reference', targetId: value.targetId }
+  if (value.kind === 'list') return { kind: 'list', value: value.value.map(cloneFieldValue) }
+  return {
+    kind: 'table',
+    columns: [...value.columns],
+    rows: value.rows.map((row) => ({ ...row })),
+  }
+}
+
+function cloneField(field: WorkflowField): WorkflowField {
+  return {
+    ...field,
+    id: newId('field'),
+    value: cloneFieldValue(field.value),
+    options: field.options?.map((option) => ({ ...option })),
+    validation: { ...field.validation, customRules: [...field.validation.customRules] },
+  }
+}
+
+function cloneSection(section: WorkflowSection, order: number): WorkflowSection {
+  return {
+    ...section,
+    id: newId('section'),
+    title: `${section.title} 副本`,
+    order,
+    fields: section.fields.map(cloneField),
+  }
 }
 
 function defaultSourcePriority(workflow: WorkflowSchema): SourceRef[] {
@@ -496,6 +530,42 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
         if (!section) return
         Object.assign(section, patch)
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
+  duplicateSection: (documentId, sectionId) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const document = draft.documents.find((candidate) => candidate.id === documentId)
+        if (!document) return
+        const sourceIndex = document.sections.findIndex((section) => section.id === sectionId)
+        if (sourceIndex === -1) return
+        document.sections.splice(sourceIndex + 1, 0, cloneSection(document.sections[sourceIndex], sourceIndex + 2))
+        document.sections.forEach((section, index) => {
+          section.order = index + 1
+        })
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
+  moveSection: (documentId, sectionId, direction) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const document = draft.documents.find((candidate) => candidate.id === documentId)
+        if (!document) return
+        const sourceIndex = document.sections.findIndex((section) => section.id === sectionId)
+        const targetIndex = sourceIndex + direction
+        if (sourceIndex === -1 || targetIndex < 0 || targetIndex >= document.sections.length) return
+        const [section] = document.sections.splice(sourceIndex, 1)
+        document.sections.splice(targetIndex, 0, section)
+        document.sections.forEach((item, index) => {
+          item.order = index + 1
+        })
         touch(draft)
       }),
     }))

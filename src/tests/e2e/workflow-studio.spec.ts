@@ -16,6 +16,7 @@ test('starts from a beginner friendly home page with two primary entries', async
 
   await page.getByRole('button', { name: '进入工作流入门' }).click()
   await expect(page.getByRole('heading', { name: '先弄懂工作流，再开始填内容。' })).toBeVisible()
+  await expect(page.getByText('工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。')).toBeVisible()
   await expect(page.getByText('如果模型断线重开，它第一眼应该看哪里？')).toBeVisible()
 
   await page.getByRole('button', { name: '去工作流搭建' }).click()
@@ -40,11 +41,13 @@ test('builds a modular workflow through document selection and protocol review',
   await expect(page.getByText('AGENTS.md 不需要你第一步手写')).toBeVisible()
   await expect(page.getByLabel(/STATUS\.html/)).toBeChecked()
   await page.getByLabel(/USER\.html/).check()
+  await page.getByLabel(/CONTEXT\.html/).check()
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
 
   await expect(page.getByRole('heading', { name: '逐份文档搭建模块。' })).toBeVisible()
   await expect(page.getByRole('button', { name: /STATUS\.html/ })).toBeVisible()
   await expect(page.locator('.write-map').getByText('写入地图', { exact: true })).toBeVisible()
+  await expect(page.locator('.write-map').first()).toContainText('STATUS.html > 当前目标与下一步 > 当前目标')
   await page.getByRole('button', { name: '证据或验证方式' }).first().click()
   await expect(page.getByText('已添加字段模块')).toBeVisible()
 
@@ -53,10 +56,20 @@ test('builds a modular workflow through document selection and protocol review',
   await expect(page.getByRole('heading', { name: '文档清单' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '读取顺序' })).toBeVisible()
   await expect(page.locator('.protocol-review-grid').getByText('USER.html').first()).toBeVisible()
+  await expect(page.locator('.protocol-field-edit textarea').first()).toHaveValue(/MEMORY\.html[\s\S]*CONTEXT\.html/)
+  const firstProtocolModule = page.locator('.protocol-module-card').first()
+  await expect(firstProtocolModule.getByRole('button', { name: '上移' })).toBeDisabled()
+  await expect(firstProtocolModule.getByRole('button', { name: '下移' })).toBeVisible()
+  await expect(firstProtocolModule.getByRole('button', { name: '复制' })).toBeVisible()
+  await expect(firstProtocolModule.getByRole('button', { name: '删除' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '新增协议模块' })).toBeVisible()
+  await firstProtocolModule.getByRole('button', { name: '复制' }).click()
+  await expect(page.getByText('已复制协议模块')).toBeVisible()
 
   await page.getByRole('button', { name: '查看结果预览' }).click()
   await expect(page.getByRole('heading', { name: '结果预览：文件树、模块分布和恢复路径。' })).toBeVisible()
   await expect(page.getByText('documents/AGENTS.html')).toBeVisible()
+  await expect(page.getByText('documents/CONTEXT.html')).toBeVisible()
   await expect(page.getByText('HTML 预览')).toBeVisible()
 })
 

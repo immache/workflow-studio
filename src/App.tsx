@@ -366,7 +366,8 @@ function LearnPage({ onBuild }: { onBuild: () => void }) {
       <section className="editorial-hero" aria-labelledby="learn-title">
         <span className="kicker">Workflow Primer</span>
         <h1 id="learn-title">先弄懂工作流，再开始填内容。</h1>
-        <p>这些章节解释的是搭建时最容易卡住的概念。你不需要记住底层字段名，只要知道每份内容文档在恢复时承担什么职责。</p>
+        <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。</p>
+        <p>下面这些章节解释搭建时最容易卡住的概念，你不需要记住底层字段名。</p>
       </section>
       <section className="primer-map" aria-label="模块化搭建方法">
         <article>
@@ -425,6 +426,11 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
   const importProject = useWorkflowStore((state) => state.importProject)
   const addSectionFromModule = useWorkflowStore((state) => state.addSectionFromModule)
   const addFieldFromModule = useWorkflowStore((state) => state.addFieldFromModule)
+  const updateFieldText = useWorkflowStore((state) => state.updateFieldText)
+  const addSection = useWorkflowStore((state) => state.addSection)
+  const duplicateSection = useWorkflowStore((state) => state.duplicateSection)
+  const moveSection = useWorkflowStore((state) => state.moveSection)
+  const removeSection = useWorkflowStore((state) => state.removeSection)
   const refreshProtocolDraft = useWorkflowStore((state) => state.refreshProtocolDraft)
   const setActiveView = useWorkflowStore((state) => state.setActiveView)
   const [step, setStep] = useState<BuildStep>(0)
@@ -435,6 +441,7 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     () => new Set(standardDocumentCards.filter((item) => item.recommended || item.required).map((item) => item.id)),
   )
   const [selectedCanvasDocumentId, setSelectedCanvasDocumentId] = useState('content-status')
+  const [latestWriteTarget, setLatestWriteTarget] = useState('先选择一份文档。')
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -445,9 +452,25 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
   const firstPreview = Object.entries(htmlDocs)[0]
   const rehearsal = useMemo(() => simulateRecovery(workflow, 'new-session'), [workflow])
 
+  function initialWriteTargetFor(document: WorkflowDocument): string {
+    const section = document.sections[0]
+    const field = section?.fields[0]
+    if (section && field) return `${document.filename} > ${section.title} > ${field.label}`
+    if (section) return `${document.filename} > ${section.title}`
+    return `${document.filename} > 文档职责`
+  }
+
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 })
   }, [step])
+
+  useEffect(() => {
+    if (step !== 2 || !canvasDocument) return
+    setLatestWriteTarget((current) => {
+      if (current !== '先选择一份文档。' && current.startsWith(`${canvasDocument.filename} >`)) return current
+      return initialWriteTargetFor(canvasDocument)
+    })
+  }, [canvasDocument, step])
 
   async function createFromDocumentSelection(nextStep: BuildStep = 2) {
     setIsGenerating(true)
@@ -494,13 +517,18 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
 
   function addSectionModule(moduleId: string) {
     if (!canvasDocument) return
+    const module = sectionModuleLibrary.find((item) => item.id === moduleId)
     addSectionFromModule(canvasDocument.id, moduleId)
+    setLatestWriteTarget(`${canvasDocument.filename} > ${module?.title ?? '新章节'}`)
     setGeneratedMessage('已添加章节模块。你可以继续改标题、字段和值槽。')
   }
 
   function addFieldModule(sectionId: string, moduleId: string) {
     if (!canvasDocument) return
+    const section = canvasDocument.sections.find((item) => item.id === sectionId)
+    const module = fieldModuleLibrary.find((item) => item.id === moduleId)
     addFieldFromModule(canvasDocument.id, sectionId, moduleId)
+    setLatestWriteTarget(`${canvasDocument.filename} > ${section?.title ?? '当前章节'} > ${module?.label ?? '新字段'}`)
     setGeneratedMessage('已添加字段模块。字段说明会常驻可见，具体内容写入当前内容。')
   }
 
@@ -508,6 +536,32 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     refreshProtocolDraft()
     setGeneratedMessage('入口协议草案已根据当前内容文档重新生成。请审查文档清单、读取顺序、来源优先级、更新规则和完成检查。')
     setStep(3)
+  }
+
+  function addProtocolModule() {
+    if (!protocolDocument) return
+    addSection(protocolDocument.id)
+    setGeneratedMessage('已新增协议模块。请补充模块标题、用途和草案内容。')
+  }
+
+  function duplicateProtocolModule(sectionId: string) {
+    if (!protocolDocument) return
+    duplicateSection(protocolDocument.id, sectionId)
+    setGeneratedMessage('已复制协议模块。副本会保留原说明和草案内容，请按需要改写。')
+  }
+
+  function moveProtocolModule(sectionId: string, direction: -1 | 1) {
+    if (!protocolDocument) return
+    moveSection(protocolDocument.id, sectionId, direction)
+    setGeneratedMessage('已调整协议模块顺序。')
+  }
+
+  function removeProtocolModule(sectionId: string, title: string) {
+    if (!protocolDocument) return
+    const confirmed = window.confirm(`确认删除入口协议模块「${title}」？删除后未来模型可能少读关键恢复规则。`)
+    if (!confirmed) return
+    removeSection(protocolDocument.id, sectionId)
+    setGeneratedMessage('已删除协议模块。请确认剩余草案仍覆盖读取顺序、来源优先级、更新规则和完成检查。')
   }
 
   function openAdvanced(view: AppView) {
@@ -522,7 +576,7 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
       <section className="build-shell" aria-labelledby="build-title">
         <div className="build-head">
           <span className="kicker">Workflow Builder</span>
-          <h1 id="build-title"><span className="line-lock">像搭积木一样</span><span className="line-lock">设计工作流。</span></h1>
+          <h1 id="build-title" aria-label="像搭积木一样设计工作流。"><span className="line-lock">像搭积木一样</span><span className="line-lock">设计工作流。</span></h1>
           <p>先确定需要哪些内容文档，再逐份文档添加章节、字段、展示格式和常驻说明。入口协议草案由系统后置生成，你最后审查。</p>
         </div>
         <ol className="stepper" aria-label="搭建步骤">
@@ -612,21 +666,26 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
               <p>先看这份文档负责什么，再添加章节、字段、展示格式和常驻说明。写入地图会告诉你当前动作最后写到哪里。</p>
               {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
               <div className="module-workbench">
-                <aside className="document-module-list" aria-label="内容文档">
-                  <span className="kicker">Content Documents</span>
-                  {contentDocuments.map((document) => (
-                    <button
-                      key={document.id}
-                      type="button"
-                      className={canvasDocument?.id === document.id ? 'module-doc-card active' : 'module-doc-card'}
-                      onClick={() => setSelectedCanvasDocumentId(document.id)}
-                    >
-                      <strong>{document.filename}</strong>
-                      <span>{document.description}</span>
-                    </button>
-                  ))}
-                </aside>
                 <div className="module-canvas">
+                  <nav className="document-module-list" aria-label="内容文档">
+                    <span className="kicker">Content Documents</span>
+                    <div className="document-tab-row">
+                      {contentDocuments.map((document) => (
+                        <button
+                          key={document.id}
+                          type="button"
+                          className={canvasDocument?.id === document.id ? 'module-doc-card active' : 'module-doc-card'}
+                          onClick={() => {
+                            setSelectedCanvasDocumentId(document.id)
+                            setLatestWriteTarget(`${document.filename} > 文档职责`)
+                          }}
+                        >
+                          <strong>{document.filename}</strong>
+                          <span>{document.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
                   {canvasDocument ? (
                     <>
                       <section className="canvas-document-head">
@@ -688,7 +747,8 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                 </div>
                 <aside className="write-map sticky-map" aria-label="写入地图">
                   <strong>写入地图</strong>
-                  <p>{canvasDocument ? `当前模块会写入 ${canvasDocument.filename}。章节模块会成为文档章节，字段模块会成为常驻说明和值槽。` : '先选择一份文档。'}</p>
+                  <p>{latestWriteTarget}</p>
+                  <p>{canvasDocument ? `当前操作位于 ${canvasDocument.filename}。章节模块会成为文档章节，字段模块会成为常驻说明和值槽。` : '先选择一份文档。'}</p>
                   <p>未来模型会按入口协议先找到这份文档，再根据章节和字段说明恢复判断。</p>
                 </aside>
               </div>
@@ -706,27 +766,48 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
               <p><code>AGENTS.md</code> 会串联所有内容文档。你现在审查的是草案，不是第一步手写的协议。</p>
               {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
               <div className="protocol-review-grid">
-                {protocolDocument?.sections.map((section) => (
+                {protocolDocument?.sections.map((section, index) => (
                   <article key={section.id} className="protocol-module-card">
-                    <span className="kicker">Protocol Module</span>
-                    <h3>{section.title}</h3>
-                    <p>{section.purpose}</p>
+                    <div className="protocol-module-head">
+                      <div>
+                        <span className="kicker">Protocol Module</span>
+                        <h3>{section.title}</h3>
+                        <p>{section.purpose}</p>
+                      </div>
+                      <div className="protocol-module-actions" aria-label={`${section.title} 模块操作`}>
+                        <button type="button" className="button button-ghost" disabled={index === 0} onClick={() => moveProtocolModule(section.id, -1)}>上移</button>
+                        <button type="button" className="button button-ghost" disabled={index === (protocolDocument?.sections.length ?? 0) - 1} onClick={() => moveProtocolModule(section.id, 1)}>下移</button>
+                        <button type="button" className="button button-secondary" onClick={() => duplicateProtocolModule(section.id)}>复制</button>
+                        <button type="button" className="button button-secondary" onClick={() => removeProtocolModule(section.id, section.title)}>删除</button>
+                      </div>
+                    </div>
                     {section.fields.map((field) => (
                       <div key={field.id} className="canvas-field-row">
                         <strong>{field.label}</strong>
                         <p>{field.guidance}</p>
-                        <small>{fieldValueToText(field.value).split('\n').slice(0, 3).join(' / ') || '还没有内容'}</small>
+                        <label className="protocol-field-edit">
+                          草案内容
+                          <textarea
+                            rows={Math.min(8, Math.max(4, fieldValueToText(field.value).split('\n').length + 1))}
+                            value={fieldValueToText(field.value)}
+                            onChange={(event) => updateFieldText(protocolDocument.id, section.id, field.id, event.currentTarget.value)}
+                          />
+                        </label>
                       </div>
                     ))}
                   </article>
                 ))}
               </div>
+              <button type="button" className="button button-secondary protocol-add-module" onClick={addProtocolModule}>
+                <Plus size={15} aria-hidden="true" />
+                新增协议模块
+              </button>
               <section className="write-map" aria-label="写入地图">
                 <strong>写入地图</strong>
                 <p>这些模块写入 <code>AGENTS.md</code>，未来模型恢复时会先读这里，再根据读取顺序进入其他文档。</p>
               </section>
               <div className="builder-actions">
-                <button type="button" className="button button-secondary" onClick={() => openAdvanced('documents')}>模块化编辑草案</button>
+                <button type="button" className="button button-secondary" onClick={() => openAdvanced('documents')}>打开高级编辑</button>
                 <button type="button" className="button button-primary" onClick={() => setStep(4)}>查看结果预览</button>
               </div>
             </section>

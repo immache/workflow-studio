@@ -7,7 +7,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 2,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:learn",
@@ -17,7 +19,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:build-purpose",
@@ -27,7 +31,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:document-selection",
@@ -37,7 +43,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:module-canvas",
@@ -47,7 +55,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 2,
+    "documentTabColumns": 2
   },
   {
     "label": "desktop:agents-draft-review",
@@ -57,7 +67,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:result-preview",
@@ -67,7 +79,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "desktop:export",
@@ -77,7 +91,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:home",
@@ -87,7 +103,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 2,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:learn",
@@ -97,7 +115,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:build-purpose",
@@ -107,7 +127,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:document-selection",
@@ -117,7 +139,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:module-canvas",
@@ -127,7 +151,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 2,
+    "documentTabColumns": 2
   },
   {
     "label": "tablet:agents-draft-review",
@@ -137,7 +163,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:result-preview",
@@ -147,7 +175,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "tablet:export",
@@ -157,7 +187,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:home",
@@ -167,7 +199,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 2,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:learn",
@@ -177,7 +211,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:build-purpose",
@@ -187,7 +223,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:document-selection",
@@ -197,7 +235,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:module-canvas",
@@ -207,7 +247,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 1,
+    "documentTabColumns": 1
   },
   {
     "label": "mobile:agents-draft-review",
@@ -217,7 +259,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": true,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:result-preview",
@@ -227,7 +271,9 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   },
   {
     "label": "mobile:export",
@@ -237,6 +283,8 @@
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
     "writeMapVisible": false,
-    "protocolMapVisible": false
+    "protocolMapVisible": false,
+    "moduleWorkbenchColumns": 0,
+    "documentTabColumns": 0
   }
 ]
