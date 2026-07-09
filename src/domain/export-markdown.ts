@@ -22,6 +22,12 @@ export function exportMarkdownDocuments(workflow: WorkflowSchema): Record<string
 
 export function exportReadme(workflow: WorkflowSchema): string {
   const files = workflow.documents.map((document) => `- \`${document.filename}\`：${document.description}`).join('\n')
+  const moduleSummary = workflow.documents
+    .map((document) => {
+      const sections = document.sections.map((section) => `${section.title}（${section.fields.length} 个字段）`).join('；')
+      return `- \`${document.filename}\`：${sections || '暂无章节'}`
+    })
+    .join('\n')
   const recovery = workflow.rules.recoveryOrder
     .map((step, index) => {
       const document = workflow.documents.find((candidate) => candidate.id === step.documentId)
@@ -36,6 +42,10 @@ export function exportReadme(workflow: WorkflowSchema): string {
     '## 文件清单',
     '',
     files,
+    '',
+    '## 模块摘要',
+    '',
+    moduleSummary,
     '',
     '## 推荐读取顺序',
     '',

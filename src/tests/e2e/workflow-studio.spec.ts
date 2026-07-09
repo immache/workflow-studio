@@ -19,40 +19,45 @@ test('starts from a beginner friendly home page with two primary entries', async
   await expect(page.getByText('如果模型断线重开，它第一眼应该看哪里？')).toBeVisible()
 
   await page.getByRole('button', { name: '去工作流搭建' }).click()
-  await expect(page.getByRole('heading', { name: '一步步搭建工作流。' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '你想从哪里开始？' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /导入已有包/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '像搭积木一样设计工作流。' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '先说清这套工作流要帮谁接手什么。' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '继续选择内容文档' })).toBeVisible()
 })
 
-test('builds a minimal blank workflow through natural language questions', async ({ page }) => {
+test('builds a modular workflow through document selection and protocol review', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始搭建工作流' }).click()
 
   const beginnerFlow = page.locator('.onboarding-main')
-  await expect(beginnerFlow).not.toContainText(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType/)
+  await expect(beginnerFlow).not.toContainText(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType|sourcePriority/)
 
-  await page.getByRole('button', { name: /从空白开始/ }).click()
   await page.getByLabel('这个工作流服务哪个项目或任务？').fill('资料整理项目')
   await page.getByLabel('未来模型恢复时最容易丢失什么信息？').fill('当前目标、输入材料位置和用户最近确认的边界。')
   await page.getByLabel('恢复后希望模型立刻做什么？').fill('先读取 STATUS.html，再检查下一原子步骤。')
-  await page.getByRole('button', { name: '生成最小工作流' }).click()
+  await page.getByRole('button', { name: '继续选择内容文档' }).click()
 
-  await expect(page.getByText('已生成最小可恢复工作流')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '需要留下哪些恢复材料？' })).toBeVisible()
-  await expect(page.getByText('历史演变').first()).toBeVisible()
-  await page.getByLabel(/长期计划/).check()
-  await page.getByRole('button', { name: '继续填写核心内容' }).click()
-  await expect(page.getByRole('heading', { name: '每份材料先填最关键的内容。' })).toBeVisible()
-  await expect(page.getByText('历史演变')).toBeVisible()
-  await expect(page.getByText('长期计划')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '先选择需要的内容文档。' })).toBeVisible()
+  await expect(page.getByText('AGENTS.md 不需要你第一步手写')).toBeVisible()
+  await expect(page.getByLabel(/STATUS\.html/)).toBeChecked()
+  await page.getByLabel(/USER\.html/).check()
+  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
 
-  await page.getByRole('button', { name: '打开材料细节' }).click()
-  await expect(page.getByRole('heading', { name: '写给未来模型看的资料' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /MEMORY\.html/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /SPEC\.html/ })).toBeVisible()
-  await page.getByRole('button', { name: /STATUS\.html/ }).click()
-  await expect(page.locator('[data-field="blank-current-goal"]').getByLabel('当前内容')).toHaveValue('资料整理项目')
-  await expect(page.locator('[data-field="blank-next-atomic-step"]').getByLabel('当前内容')).toHaveValue('先读取 STATUS.html，再检查下一原子步骤。')
+  await expect(page.getByRole('heading', { name: '逐份文档搭建模块。' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /STATUS\.html/ })).toBeVisible()
+  await expect(page.locator('.write-map').getByText('写入地图', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '证据或验证方式' }).first().click()
+  await expect(page.getByText('已添加字段模块')).toBeVisible()
+
+  await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
+  await expect(page.getByRole('heading', { name: '审查系统生成的入口协议草案。' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '文档清单' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '读取顺序' })).toBeVisible()
+  await expect(page.locator('.protocol-review-grid').getByText('USER.html').first()).toBeVisible()
+
+  await page.getByRole('button', { name: '查看结果预览' }).click()
+  await expect(page.getByRole('heading', { name: '结果预览：文件树、模块分布和恢复路径。' })).toBeVisible()
+  await expect(page.getByText('documents/AGENTS.html')).toBeVisible()
+  await expect(page.getByText('HTML 预览')).toBeVisible()
 })
 
 test('supports the core advanced workflow design path', async ({ page }) => {

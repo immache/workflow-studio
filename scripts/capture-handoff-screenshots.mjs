@@ -15,7 +15,8 @@ async function metrics(page, label) {
   return page.evaluate((currentLabel) => {
     const root = document.documentElement
     const onboarding = document.querySelector('.onboarding-main')
-    const rawTerms = onboarding?.innerText.match(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType/g) ?? []
+    const rawTerms = onboarding?.innerText.match(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType|sourcePriority/g) ?? []
+    const writeMapVisible = Boolean(document.querySelector('.write-map'))
     return {
       label: currentLabel,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
@@ -23,6 +24,8 @@ async function metrics(page, label) {
       horizontalOverflow: Math.max(0, root.scrollWidth - root.clientWidth),
       onboardingRawTerms: [...new Set(rawTerms)],
       homePrimaryEntries: document.querySelectorAll('.home-entry .button').length,
+      writeMapVisible,
+      protocolMapVisible: document.body.innerText.includes('协议地图'),
     }
   }, label)
 }
@@ -50,21 +53,25 @@ async function runViewport(browser, config) {
   results.push(await capture(page, config.name, 'learn'))
 
   await page.locator('.learn-cta .button').click()
-  results.push(await capture(page, config.name, 'build-start'))
+  results.push(await capture(page, config.name, 'build-purpose'))
 
-  await page.locator('.start-grid .start-card').nth(1).click()
-  await page.locator('.question-form input').fill('截图验收工作流')
-  await page.locator('.question-form textarea').nth(0).fill('当前目标、已验证事实和下一原子步骤。')
-  await page.locator('.question-form textarea').nth(1).fill('先读取 STATUS.html，再继续执行下一原子步骤。')
-  await page.locator('.builder-actions .button-primary').click()
-  await page.getByLabel(/长期计划/).check()
-  await page.locator('.builder-actions .button-primary').click()
-  results.push(await capture(page, config.name, 'build-generated'))
+  await page.getByLabel('这个工作流服务哪个项目或任务？').fill('截图验收工作流')
+  await page.getByLabel('未来模型恢复时最容易丢失什么信息？').fill('当前目标、已验证事实和下一原子步骤。')
+  await page.getByLabel('恢复后希望模型立刻做什么？').fill('先读取 STATUS.html，再继续执行下一原子步骤。')
+  await page.getByRole('button', { name: '继续选择内容文档' }).click()
+  results.push(await capture(page, config.name, 'document-selection'))
 
-  await page.locator('.builder-actions .button-secondary').click()
-  results.push(await capture(page, config.name, 'advanced-documents'))
+  await page.getByLabel(/USER\.html/).check()
+  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
+  results.push(await capture(page, config.name, 'module-canvas'))
 
-  await page.getByRole('button', { name: /生成可复制的工作流包/ }).click()
+  await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
+  results.push(await capture(page, config.name, 'agents-draft-review'))
+
+  await page.getByRole('button', { name: '查看结果预览' }).click()
+  results.push(await capture(page, config.name, 'result-preview'))
+
+  await page.getByRole('button', { name: '打开完整导出页' }).click()
   results.push(await capture(page, config.name, 'export'))
 
   await context.close()
@@ -84,4 +91,16 @@ try {
 }
 
 await writeFile(path.join(outputDir, 'metrics.json'), `${JSON.stringify(allMetrics, null, 2)}\n`, 'utf8')
+const failures = allMetrics.filter((item) =>
+  item.horizontalOverflow > 0 ||
+  item.onboardingRawTerms.length > 0 ||
+  item.protocolMapVisible ||
+  (
+    ['document-selection', 'module-canvas', 'agents-draft-review'].some((state) => item.label.endsWith(state)) &&
+    !item.writeMapVisible
+  ),
+)
+if (failures.length > 0) {
+  throw new Error(`Screenshot acceptance failed: ${JSON.stringify(failures, null, 2)}`)
+}
 console.log(`Captured ${allMetrics.length} states into ${outputDir}`)

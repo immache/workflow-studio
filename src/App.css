@@ -334,6 +334,30 @@
   gap: 16px;
 }
 
+.primer-map {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 18px 0 28px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.primer-map article {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.primer-map h2 {
+  font-size: 27px;
+}
+
+.primer-map p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .lesson-card {
   display: grid;
   grid-template-columns: 74px minmax(0, 1fr);
@@ -650,6 +674,170 @@
   min-height: 142px;
 }
 
+.document-card small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.write-map {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #dfc9bc;
+  border-radius: 10px;
+  background: #fbf7f1;
+}
+
+.write-map strong {
+  color: var(--accent-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.write-map p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.module-workbench {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.25fr) minmax(0, 1fr) minmax(220px, 0.28fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.document-module-list,
+.module-canvas,
+.protocol-module-card,
+.canvas-section-card,
+.result-preview-grid > .plain-panel {
+  min-width: 0;
+}
+
+.document-module-list {
+  display: grid;
+  gap: 10px;
+}
+
+.module-doc-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.module-doc-card:hover,
+.module-doc-card.active {
+  border-color: #dfc9bc;
+  background: #fbf7f1;
+}
+
+.module-doc-card span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.module-canvas {
+  display: grid;
+  gap: 16px;
+}
+
+.canvas-document-head,
+.module-library-strip,
+.canvas-section-card,
+.protocol-module-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.canvas-document-head {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.canvas-document-head p,
+.module-library-strip p,
+.canvas-section-card p,
+.protocol-module-card p {
+  color: var(--muted);
+}
+
+.module-library-strip {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.module-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.canvas-section-list,
+.canvas-field-list,
+.protocol-review-grid,
+.result-preview-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.canvas-section-card,
+.protocol-module-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.canvas-field-row {
+  display: grid;
+  gap: 5px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.canvas-field-row:first-child {
+  border-top: 0;
+}
+
+.canvas-field-row p,
+.canvas-field-row small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.sticky-map {
+  position: sticky;
+  top: 138px;
+}
+
+.protocol-review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.result-preview-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.result-preview-grid > .plain-panel:last-child {
+  grid-column: 1 / -1;
+}
+
 .studio-layout {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -938,6 +1126,11 @@ h1 {
   line-height: 1.05;
   letter-spacing: 0;
   text-wrap: balance;
+}
+
+.line-lock {
+  display: block;
+  white-space: nowrap;
 }
 
 h2 {
@@ -1663,7 +1856,11 @@ select:focus-visible,
 
   .home-hero,
   .home-entry-grid,
+  .primer-map,
   .build-shell,
+  .module-workbench,
+  .protocol-review-grid,
+  .result-preview-grid,
   .start-grid,
   .material-grid,
   .generated-summary,
@@ -1738,6 +1935,14 @@ select:focus-visible,
 
   .builder-step h2 {
     font-size: 36px;
+  }
+
+  .document-module-list {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  }
+
+  .sticky-map {
+    position: static;
   }
 
   .studio-layout,
@@ -1951,6 +2156,17 @@ select:focus-visible,
 
   .mode-home .home-entry .button {
     margin-top: 0;
+  }
+
+  .module-button-row {
+    display: grid;
+  }
+
+  .module-button-row .button {
+    width: 100%;
+    justify-content: flex-start;
+    white-space: normal;
+    line-height: 1.35;
   }
 
   .mode-home .home-afterword {

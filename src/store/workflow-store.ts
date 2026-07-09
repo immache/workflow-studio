@@ -4,6 +4,14 @@ import {
   createCurrentStandardWorkflow,
   createBlankWorkflow,
 } from '../data/presets/current-standard-workflow'
+import {
+  createFieldFromModule,
+  createModularWorkflow,
+  createProtocolDraftDocument,
+  createRulesForDocuments,
+  createSectionFromModule,
+  type ContentDocumentId,
+} from '../data/modules/standard-workflow-modules'
 import { parseImportedWorkflow } from '../domain/import-export'
 import {
   createField,
@@ -58,6 +66,7 @@ type WorkflowStore = {
   selectField: (documentId: string, sectionId: string, fieldId: string) => void
   createPresetProject: () => Promise<void>
   createBlankProject: (materialIds?: Iterable<string>) => Promise<void>
+  createModularProject: (input: { name: string; description: string; selectedDocumentIds: Iterable<ContentDocumentId>; firstAction: string; recoveryRisk: string }) => Promise<void>
   duplicateCurrentProject: () => Promise<void>
   openProject: (id: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
@@ -70,9 +79,11 @@ type WorkflowStore = {
   moveDocument: (documentId: string, direction: -1 | 1) => void
   removeDocument: (documentId: string) => void
   addSection: (documentId: string) => void
+  addSectionFromModule: (documentId: string, moduleId: string) => void
   updateSection: (documentId: string, sectionId: string, patch: Partial<Pick<WorkflowSection, 'title' | 'purpose' | 'lifecycle'>>) => void
   removeSection: (documentId: string, sectionId: string) => void
   addField: (documentId: string, sectionId: string) => void
+  addFieldFromModule: (documentId: string, sectionId: string, moduleId: string) => void
   updateField: (documentId: string, sectionId: string, fieldId: string, patch: Partial<Pick<WorkflowField, 'label' | 'type' | 'guidance' | 'lifecycle' | 'required' | 'allowEmpty' | 'defaultValue' | 'repeatable' | 'options' | 'validation'>>) => void
   updateFieldText: (documentId: string, sectionId: string, fieldId: string, value: string) => void
   addFieldInstance: (documentId: string, sectionId: string, fieldId: string) => void
@@ -95,6 +106,7 @@ type WorkflowStore = {
   updateCompletionCheck: (id: string, patch: Partial<Pick<CompletionCheck, 'label' | 'description' | 'severityWhenMissing'>>) => void
   addCompletionCheck: () => void
   removeCompletionCheck: (id: string) => void
+  refreshProtocolDraft: () => void
   updateConflictPolicy: (patch: Partial<ConflictPolicy>) => void
   updateHistoryPolicy: (patch: Partial<HistoryPolicy>) => void
   setSimulationScenario: (scenario: SimulationScenario) => void
@@ -298,6 +310,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ workflow, selectedDocumentId: selectedDocumentIdFor(workflow), selectedSectionId: undefined, selectedFieldId: undefined })
     await get().saveCurrent()
   },
+  createModularProject: async (input) => {
+    const workflow = createModularWorkflow(input)
+    set({ workflow, selectedDocumentId: selectedDocumentIdFor(workflow), selectedSectionId: undefined, selectedFieldId: undefined })
+    await get().saveCurrent()
+  },
   duplicateCurrentProject: async () => {
     if (!canEdit(get().workflow)) return
     const current = get().workflow
@@ -459,6 +476,19 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }))
     void get().saveCurrent()
   },
+  addSectionFromModule: (documentId, moduleId) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const document = draft.documents.find((candidate) => candidate.id === documentId)
+        const section = document ? createSectionFromModule(moduleId, document.sections.length + 1) : undefined
+        if (!document || !section) return
+        document.sections.push(section)
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
   updateSection: (documentId, sectionId, patch) => {
     if (!canEdit(get().workflow)) return
     set((state) => ({
@@ -490,6 +520,19 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
         if (!section) return
         section.fields.push(newField(section.fields.length + 1))
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
+  addFieldFromModule: (documentId, sectionId, moduleId) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
+        const field = createFieldFromModule(moduleId)
+        if (!section || !field) return
+        section.fields.push(field)
         touch(draft)
       }),
     }))
@@ -822,6 +865,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         touch(draft)
       }),
     }))
+    void get().saveCurrent()
+  },
+  refreshProtocolDraft: () => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const contentDocuments = draft.documents
+          .filter((document) => document.role !== 'protocol')
+          .map((document, index) => ({ ...document, order: index + 2, readPolicy: { ...document.readPolicy, readOrderHint: index + 2 } }))
+        const protocol = createProtocolDraftDocument(contentDocuments, 1)
+        draft.documents = [protocol, ...contentDocuments]
+        draft.rules = createRulesForDocuments(contentDocuments)
+        draft.documents.forEach((document, index) => {
+          document.order = index + 1
+          document.readPolicy.readOrderHint = index + 1
+        })
+        touch(draft)
+      }),
+    }))
+    set({ selectedDocumentId: 'agents', selectedSectionId: undefined, selectedFieldId: undefined })
     void get().saveCurrent()
   },
   updateConflictPolicy: (patch) => {

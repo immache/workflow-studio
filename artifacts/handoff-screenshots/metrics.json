@@ -5,7 +5,9 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 2
+    "homePrimaryEntries": 2,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "desktop:learn",
@@ -13,31 +15,59 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "desktop:build-start",
+    "label": "desktop:build-purpose",
     "viewport": "1440x1000",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "desktop:build-generated",
+    "label": "desktop:document-selection",
     "viewport": "1440x1000",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
   },
   {
-    "label": "desktop:advanced-documents",
+    "label": "desktop:module-canvas",
     "viewport": "1440x1000",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "desktop:agents-draft-review",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "desktop:result-preview",
+    "viewport": "1440x1000",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "desktop:export",
@@ -45,7 +75,9 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "tablet:home",
@@ -53,7 +85,9 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 2
+    "homePrimaryEntries": 2,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "tablet:learn",
@@ -61,31 +95,59 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "tablet:build-start",
+    "label": "tablet:build-purpose",
     "viewport": "1024x900",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "tablet:build-generated",
+    "label": "tablet:document-selection",
     "viewport": "1024x900",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
   },
   {
-    "label": "tablet:advanced-documents",
+    "label": "tablet:module-canvas",
     "viewport": "1024x900",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "tablet:agents-draft-review",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "tablet:result-preview",
+    "viewport": "1024x900",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "tablet:export",
@@ -93,7 +155,9 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "mobile:home",
@@ -101,7 +165,9 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 2
+    "homePrimaryEntries": 2,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "mobile:learn",
@@ -109,31 +175,59 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "mobile:build-start",
+    "label": "mobile:build-purpose",
     "viewport": "393x852",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
-    "label": "mobile:build-generated",
+    "label": "mobile:document-selection",
     "viewport": "393x852",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
   },
   {
-    "label": "mobile:advanced-documents",
+    "label": "mobile:module-canvas",
     "viewport": "393x852",
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "mobile:agents-draft-review",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": true,
+    "protocolMapVisible": false
+  },
+  {
+    "label": "mobile:result-preview",
+    "viewport": "393x852",
+    "scrollY": 0,
+    "horizontalOverflow": 0,
+    "onboardingRawTerms": [],
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   },
   {
     "label": "mobile:export",
@@ -141,6 +235,8 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "onboardingRawTerms": [],
-    "homePrimaryEntries": 0
+    "homePrimaryEntries": 0,
+    "writeMapVisible": false,
+    "protocolMapVisible": false
   }
 ]
