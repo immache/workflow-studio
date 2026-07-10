@@ -215,6 +215,15 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     ...workflow.rules.completionChecks.map((check) => check.id),
   ]
   const entityIdSet = new Set(entityIds)
+  if (entityIds.some((id) => id.trim().length === 0)) {
+    issues.push(issue({
+      severity: 'error',
+      title: 'ID 为空',
+      message: '工作流、文档、章节、字段和规则都必须有非空 ID。',
+      target: {},
+      ruleId: 'structure-nonempty-ids',
+    }))
+  }
   for (const id of duplicateValues(entityIds)) {
     issues.push(
       issue({
@@ -753,6 +762,18 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         }
       }
       for (const customRule of field.validation.customRules) {
+        if (customRule.predicate === 'custom') {
+          issues.push(
+            issue({
+              severity: 'error',
+              title: '高级校验条件不受支持',
+              message: `${customRule.description} 使用了无法在本地执行的 custom 条件；请改用 non-empty、valid-path、valid-url、valid-email 或 matches-pattern。`,
+              target: validationTarget,
+              ruleId: `field-validation-custom-unsupported-${customRule.id}`,
+            }),
+          )
+          continue
+        }
         if (customRuleFails(customRule.predicate, valueText, field.validation.pattern)) {
           issues.push(
             issue({

@@ -357,6 +357,26 @@ describe('Workflow Studio domain model', () => {
     expect(result.conflicts[0]?.resolution).toBe('resolved')
   })
 
+  it('reads a document-backed winning source before resolving a goal conflict', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const sourceRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+    if (!sourceRule) throw new Error('missing global source-priority fixture')
+    const memorySource = sourceRule.orderedSources.find((source) => source.documentId === 'memory')
+    if (!memorySource) throw new Error('missing memory source fixture')
+    sourceRule.orderedSources = [memorySource, ...sourceRule.orderedSources.filter((source) => source !== memorySource)]
+
+    const result = simulateRecovery(workflow, 'goal-conflict')
+
+    expect(result.conflicts[0]).toMatchObject({
+      resolution: 'resolved',
+      selectedSource: { documentId: 'memory' },
+    })
+    expect(result.readDocuments).toContain('MEMORY.html')
+    expect(result.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: '为裁决冲突读取 MEMORY.html', outcome: 'read' }),
+    ]))
+  })
+
   it('generates static HTML and Markdown documents with visible guidance', () => {
     const workflow = createCurrentStandardWorkflow()
     const html = exportHtmlDocuments(workflow)
@@ -765,12 +785,34 @@ describe('Workflow Studio domain model', () => {
       tieBreaker: 'manual-review',
       reason: '只适用于单个字段。',
     })
+    const globalRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+    const memorySource = globalRule?.orderedSources.find((source) => source.documentId === 'memory')
+    if (!globalRule || !memorySource) throw new Error('missing global source-priority fixture')
+    globalRule.orderedSources = [memorySource, ...globalRule.orderedSources.filter((source) => source !== memorySource)]
 
     const result = simulateRecovery(workflow, 'stale-status')
-    expect(result.conflicts.find((conflict) => conflict.id === 'stale-status-workspace-fact')).toMatchObject({
+    expect(result.conflicts.find((conflict) => conflict.id === 'stale-status-source-priority')).toMatchObject({
       resolution: 'resolved',
-      selectedSource: { sourceType: 'workspace-fact' },
+      selectedSource: { documentId: 'memory' },
     })
+    expect(result.readDocuments).toContain('MEMORY.html')
+  })
+
+  it('rejects empty entity IDs and unsupported custom predicates', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const field = workflow.documents[0].sections[0].fields[0]
+    field.id = '   '
+    field.validation.customRules = [{
+      id: 'unsupported-condition',
+      description: '执行任意自定义判断',
+      severity: 'error',
+      predicate: 'custom',
+    }]
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'structure-nonempty-ids', severity: 'error' }),
+      expect.objectContaining({ ruleId: 'field-validation-custom-unsupported-unsupported-condition', severity: 'error' }),
+    ]))
   })
 
   it('rejects duplicate custom validation rule IDs', async () => {

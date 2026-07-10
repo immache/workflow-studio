@@ -1,4 +1,4 @@
-import { type SimulatedConflict, type SimulationResult, type SimulationScenario, type SimulationStep, type WorkflowSchema } from './schema'
+import { type SimulatedConflict, type SimulationResult, type SimulationScenario, type SimulationStep, type SourceRef, type WorkflowSchema } from './schema'
 import { resolveNextAtomicStep } from './recovery-semantics'
 import { validateWorkflow } from './validation'
 
@@ -37,6 +37,29 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
   const readDocumentIds = new Set<string>()
   const conflicts: SimulatedConflict[] = []
   const recoveryIssues = validateWorkflow(workflow).filter((issue) => issue.severity === 'error' && recoveryBlockingRules.has(issue.ruleId))
+
+  function makeSourceAvailable(source: SourceRef | undefined, reason: string): source is SourceRef {
+    if (!source) {
+      blockers.push('来源优先级为空，无法完成冲突裁决。')
+      return false
+    }
+    if (!source.documentId || readDocumentIds.has(source.documentId)) return true
+    const document = documentById.get(source.documentId)
+    if (!document) {
+      blockers.push(`来源“${source.label}”引用了不存在的文档，无法完成冲突裁决。`)
+      return false
+    }
+    steps.push({
+      order: steps.length + 1,
+      action: `为裁决冲突读取 ${document.filename}`,
+      documentId: document.id,
+      reason,
+      outcome: 'read',
+    })
+    readDocuments.push(document.filename)
+    readDocumentIds.add(document.id)
+    return true
+  }
 
   if (recoveryIssues.length > 0) {
     blockers.push(...recoveryIssues.map((issue) => issue.message))
@@ -106,19 +129,20 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
       })
     } else {
       const selectedSource = sourceRule.orderedSources[0]
+      const sourceAvailable = makeSourceAvailable(selectedSource, `全局来源优先级将“${selectedSource?.label ?? '未配置来源'}”列为首选。`)
       steps.push({
         order: steps.length + 1,
         action: `按来源优先级选择 ${selectedSource?.label ?? '最高优先级来源'}`,
         reason: sourceRule.reason,
-        outcome: 'conflict',
+        outcome: sourceAvailable ? 'conflict' : 'blocked',
       })
       conflicts.push({
         id: 'goal-conflict-source-priority',
         description: '模拟最新用户目标、工作区事实和恢复文档之间存在冲突。',
         competingSources: sourceRule.orderedSources,
-        selectedSource,
-        resolution: selectedSource ? 'resolved' : 'manual-review-required',
-        reason: selectedSource ? sourceRule.reason : '来源优先级为空，需要人工确认。',
+        selectedSource: sourceAvailable ? selectedSource : undefined,
+        resolution: sourceAvailable ? 'resolved' : 'blocked',
+        reason: sourceAvailable ? sourceRule.reason : '最高优先级来源不可用，不能据此裁决。',
       })
     }
   }
@@ -129,21 +153,22 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
       blockers.push('没有实时状态文档，无法核对状态是否过期。')
     } else {
       const sourceRule = globalSourcePriorityRule(workflow)
-      const workspaceSource = sourceRule?.orderedSources.find((source) => source.sourceType === 'workspace-fact')
+      const selectedSource = sourceRule?.orderedSources[0]
+      const sourceAvailable = makeSourceAvailable(selectedSource, `状态过期时仍按全局来源优先级读取“${selectedSource?.label ?? '未配置来源'}”。`)
       steps.push({
         order: steps.length + 1,
-        action: `核对 ${statusDocument.filename} 与新鲜工作区事实`,
+        action: `核对 ${statusDocument.filename} 与全局最高优先级来源`,
         documentId: statusDocument.id,
-        reason: '状态可能已经过期，不能直接沿用旧事实。',
-        outcome: 'conflict',
+        reason: sourceRule?.reason ?? '缺少全局来源优先级。',
+        outcome: sourceAvailable ? 'conflict' : 'blocked',
       })
       conflicts.push({
-        id: 'stale-status-workspace-fact',
-        description: '模拟实时状态与新鲜工作区事实不一致。',
+        id: 'stale-status-source-priority',
+        description: '模拟实时状态与其他事实来源不一致。',
         competingSources: sourceRule?.orderedSources ?? [],
-        selectedSource: workspaceSource,
-        resolution: workspaceSource ? 'resolved' : 'manual-review-required',
-        reason: workspaceSource ? '状态过期时优先采用新鲜工作区事实。' : '缺少工作区事实来源，需要人工确认。',
+        selectedSource: sourceAvailable ? selectedSource : undefined,
+        resolution: sourceAvailable ? 'resolved' : 'blocked',
+        reason: sourceAvailable ? sourceRule?.reason ?? '按全局来源优先级裁决。' : '缺少可用的全局最高优先级来源。',
       })
     }
   }

@@ -89,6 +89,11 @@ type BuilderDraft = {
   rulesBaselineFingerprint: string
 }
 
+type BuilderSimulationRecord = {
+  workflowFingerprint: string
+  scenario: SimulationScenario
+}
+
 const BUILDER_DRAFT_KEY_PREFIX = 'workflow-studio.builder-draft.v2'
 
 function protocolFingerprint(workflow: WorkflowSchema): string {
@@ -97,6 +102,14 @@ function protocolFingerprint(workflow: WorkflowSchema): string {
 
 function rulesFingerprint(workflow: WorkflowSchema): string {
   return JSON.stringify(workflow.rules)
+}
+
+function builderSimulationFingerprint(workflow: WorkflowSchema): string {
+  return JSON.stringify({
+    workflowId: workflow.workflowId,
+    documents: workflow.documents,
+    rules: workflow.rules,
+  })
 }
 
 function readBuilderDraft(workflow: WorkflowSchema): BuilderDraft {
@@ -355,7 +368,8 @@ function customRulesToText(rules: ValidationRule[]): string {
   return rules.map((rule) => [rule.severity, rule.predicate, rule.description].join(' | ')).join('\n')
 }
 
-function parseCustomRulesText(text: string): ValidationRule[] {
+function parseCustomRulesText(text: string, fieldId: string): ValidationRule[] {
+  const idPrefix = fieldId.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'field'
   return text.split(/\r?\n/)
     .map((line, index) => {
       const [severityInput, predicateInput, descriptionInput] = line.split('|').map((part) => part.trim())
@@ -365,7 +379,7 @@ function parseCustomRulesText(text: string): ValidationRule[] {
         : 'custom'
       const description = descriptionInput || predicateInput || severityInput
       if (!description) return undefined
-      return { id: `custom-${index + 1}`, severity, predicate, description }
+      return { id: `custom-${idPrefix}-${index + 1}`, severity, predicate, description }
     })
     .filter((rule): rule is ValidationRule => Boolean(rule))
 }
@@ -836,10 +850,11 @@ function BuildWizard({
   const [isGenerating, setIsGenerating] = useState(false)
   const [isBuilderExporting, setIsBuilderExporting] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
+  const [builderExportMessage, setBuilderExportMessage] = useState('')
   const [previewFilename, setPreviewFilename] = useState('')
   const [builderScenario, setBuilderScenario] = useState<SimulationScenario>('new-session')
   const [builderResultScenario, setBuilderResultScenario] = useState<SimulationScenario>('new-session')
-  const [hasRunBuilderSimulation, setHasRunBuilderSimulation] = useState(false)
+  const [builderSimulationRecord, setBuilderSimulationRecord] = useState<BuilderSimulationRecord | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
   const stepperRef = useRef<HTMLOListElement>(null)
   const canvasEditorStartRef = useRef<HTMLElement>(null)
@@ -860,6 +875,9 @@ function BuildWizard({
     ? [previewFilename, primaryDocs[previewFilename]] as const
     : defaultPreview
   const rehearsal = useMemo(() => simulateRecovery(workflow, builderResultScenario), [builderResultScenario, workflow])
+  const currentBuilderSimulationFingerprint = useMemo(() => builderSimulationFingerprint(workflow), [workflow])
+  const simulationIsCurrent = builderSimulationRecord?.workflowFingerprint === currentBuilderSimulationFingerprint
+    && builderSimulationRecord.scenario === builderScenario
   const currentDocumentErrors = canvasDocument
     ? validationIssues.filter((issue) => issue.severity === 'error' && issue.target.documentId === canvasDocument.id)
     : []
@@ -938,6 +956,11 @@ function BuildWizard({
     setProtocolBaseline(nextDraft.protocolBaselineFingerprint)
     setRulesBaseline(nextDraft.rulesBaselineFingerprint)
   }, [workflow])
+
+  useEffect(() => {
+    setBuilderSimulationRecord(null)
+    setBuilderExportMessage('')
+  }, [currentBuilderSimulationFingerprint])
 
   useEffect(() => {
     if (skipDraftSaveRef.current) {
@@ -1183,7 +1206,11 @@ function BuildWizard({
 
   function runBuilderSimulation() {
     setBuilderResultScenario(builderScenario)
-    setHasRunBuilderSimulation(true)
+    setBuilderSimulationRecord({
+      workflowFingerprint: currentBuilderSimulationFingerprint,
+      scenario: builderScenario,
+    })
+    setBuilderExportMessage('')
     window.setTimeout(() => {
       builderSimulationResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       builderSimulationResultRef.current?.focus({ preventScroll: true })
@@ -1191,17 +1218,25 @@ function BuildWizard({
   }
 
   async function downloadBuilderPackage() {
+    if (!simulationIsCurrent) {
+      setBuilderExportMessage('工作流或演练情境已经变化。请重新演练当前版本后再下载。')
+      return
+    }
+    if (rehearsal.status === 'blocked') {
+      setBuilderExportMessage('当前演练仍被阻塞，修复后请重新演练。')
+      return
+    }
     if (blockingErrors.length > 0) {
-      setGeneratedMessage('仍有阻塞问题，修复后才能下载工作流包。')
+      setBuilderExportMessage('仍有阻塞问题，修复后才能下载工作流包。')
       return
     }
     setIsBuilderExporting(true)
     try {
       const pkg = await createWorkflowZip(workflow)
       downloadBlob(pkg.blob, packageName(workflow))
-      setGeneratedMessage(`工作流包已下载，包含 ${Object.keys(pkg.files).length} 个文件。`)
+      setBuilderExportMessage(`工作流包已下载，包含 ${Object.keys(pkg.files).length} 个文件。`)
     } catch (error) {
-      setGeneratedMessage(error instanceof Error ? error.message : '工作流包生成失败。')
+      setBuilderExportMessage(error instanceof Error ? error.message : '工作流包生成失败。')
     } finally {
       setIsBuilderExporting(false)
     }
@@ -1775,8 +1810,8 @@ function BuildWizard({
                       value={builderScenario}
                       onChange={(event) => {
                         setBuilderScenario(event.currentTarget.value as SimulationScenario)
-                        setHasRunBuilderSimulation(false)
-                        setGeneratedMessage('')
+                        setBuilderSimulationRecord(null)
+                        setBuilderExportMessage('')
                       }}
                     >
                       {scenarioOptions.map((scenario) => <option key={scenario} value={scenario}>{scenarioLabels[scenario]}</option>)}
@@ -1787,7 +1822,7 @@ function BuildWizard({
                     演练“{scenarioLabels[builderScenario]}”
                   </button>
                 </div>
-                {hasRunBuilderSimulation ? (
+                {simulationIsCurrent ? (
                   <section
                     ref={builderSimulationResultRef}
                     className={`builder-simulation-result simulation-${rehearsal.status} editor-scroll-target`}
@@ -1819,12 +1854,12 @@ function BuildWizard({
                   <h3 id="builder-export-title">2. 下载可以继续编辑的工作流包</h3>
                   <p>ZIP 中同时保留可重新导入的结构化数据和给未来模型阅读的文档。</p>
                 </div>
-                {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
+                {builderExportMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={builderExportMessage} /></p> : null}
                 <div className="builder-actions">
                   <button
                     type="button"
                     className="button button-primary"
-                    disabled={!hasRunBuilderSimulation || rehearsal.status === 'blocked' || blockingErrors.length > 0 || isBuilderExporting}
+                    disabled={!simulationIsCurrent || rehearsal.status === 'blocked' || blockingErrors.length > 0 || isBuilderExporting}
                     onClick={() => void downloadBuilderPackage()}
                   >
                     <Download size={16} aria-hidden="true" />
@@ -1832,7 +1867,7 @@ function BuildWizard({
                   </button>
                   <button type="button" className="button button-secondary" onClick={() => openAdvanced('export')}>查看完整导出详情</button>
                 </div>
-                {!hasRunBuilderSimulation ? <small>先完成一次恢复演练，下载按钮才会启用。</small> : rehearsal.status === 'blocked' ? <small>当前演练被阻塞，请返回修改对应文档或协议。</small> : null}
+                {!simulationIsCurrent ? <small>先完成一次当前版本的恢复演练，下载按钮才会启用。</small> : rehearsal.status === 'blocked' ? <small>当前演练被阻塞，请返回修改对应文档或协议。</small> : null}
               </section>
               <div className="builder-actions">
                 <button type="button" className="button button-secondary" onClick={() => goToStep(4)}><ArrowLeft size={16} aria-hidden="true" />返回结果预览</button>
@@ -2522,7 +2557,7 @@ function DocumentEditor() {
                         value={customRulesToText(field.validation.customRules)}
                         placeholder="warning | non-empty | 说明…"
                         onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
-                        onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, customRules: parseCustomRulesText(event.currentTarget.value) } })}
+                        onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, customRules: parseCustomRulesText(event.currentTarget.value, field.id) } })}
                       />
                     </label>
                     <p className="raw-meta">底层值：{field.type} · {field.lifecycle} · {field.repeatable ? 'repeatable' : 'single'}</p>

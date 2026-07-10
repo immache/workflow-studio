@@ -356,6 +356,25 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   expect(zip.file('workflow.json')).toBeTruthy()
   expect(zip.file('documents/AGENTS.md')).toBeTruthy()
   expect(zip.file('documents/STATUS.html')).toBeTruthy()
+
+  const importedWorkflow = JSON.parse(await zip.file('workflow.json')!.async('string')) as { workflowId: string; name: string }
+  importedWorkflow.workflowId = 'imported-project-after-rehearsal'
+  importedWorkflow.name = '导入后的另一套工作流'
+  await page.evaluate(() => { window.location.hash = '#build/step-1' })
+  await expect(page).toHaveURL(/#build\/step-1$/)
+  await page.getByLabel('导入已有工作流包').setInputFiles({
+    name: 'another-workflow.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(importedWorkflow)),
+  })
+  await expect(page).toHaveURL(/#build\/step-3$/)
+  await page.evaluate(() => { window.location.hash = '#build/step-6' })
+  await expect(page).toHaveURL(/#build\/step-6$/)
+  await expect(guidedDownload).toBeDisabled()
+  await expect(page.getByText('先完成一次当前版本的恢复演练')).toBeVisible()
+  await page.getByRole('button', { name: /演练“/ }).click()
+  await expect(guidedDownload).toBeEnabled()
+
   await expect(page).toHaveURL(/#build\/step-6$/)
   await expect(page.getByRole('button', { name: '查看完整导出详情' })).toBeVisible()
 })
@@ -630,10 +649,14 @@ test('supports advanced field validation, hidden suggestions, and delete confirm
 
   await page.getByLabel('最小长度').first().fill('')
   await page.getByLabel('高级校验').first().fill('error | valid-email | 必须是邮箱')
+  await page.getByText('高级校验与底层值').nth(1).click()
+  await page.getByLabel('高级校验').nth(1).fill('warning | non-empty | 第二个字段不能为空')
   await page.getByRole('button', { name: '检查', exact: true }).click()
   await expect(page.getByText('自定义校验未通过')).toBeVisible()
+  await expect(page.getByText('ID 重复')).toHaveCount(0)
   await page.getByRole('button', { name: '关闭检查器' }).click()
   await page.getByLabel('高级校验').first().fill('')
+  await page.getByLabel('高级校验').nth(1).fill('')
   await page.getByLabel('当前内容').first().fill('')
 
   const structureSummary = page.getByText('结构设置').first()
