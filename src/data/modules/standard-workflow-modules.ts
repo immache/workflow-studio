@@ -360,6 +360,17 @@ export function normalizeContentDocumentIds(ids?: Iterable<string>): ContentDocu
   return contentDocumentOrder.filter((id) => selected.has(id))
 }
 
+export function findUnselectedContentDocumentReferences(
+  text: string,
+  selectedDocumentIds: Iterable<ContentDocumentId>,
+): StandardDocumentCard[] {
+  const selected = new Set(selectedDocumentIds)
+  const normalizedText = text.toLocaleLowerCase('en-US')
+  return standardDocumentCards.filter((card) => (
+    !selected.has(card.id) && normalizedText.includes(card.filename.toLocaleLowerCase('en-US'))
+  ))
+}
+
 export function createFieldFromModule(moduleId: string): WorkflowField | undefined {
   const module = fieldModuleLibrary.find((item) => item.id === moduleId)
   if (!module) return undefined

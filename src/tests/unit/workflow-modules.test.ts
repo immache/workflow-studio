@@ -4,6 +4,7 @@ import {
   createModularWorkflow,
   createProtocolDraftDocument,
   createSectionFromModule,
+  findUnselectedContentDocumentReferences,
 } from '../../data/modules/standard-workflow-modules'
 import { createWorkflowZip } from '../../domain/export-zip'
 import { exportReadme } from '../../domain/export-markdown'
@@ -88,6 +89,16 @@ describe('Workflow Studio modular builder', () => {
       nextAtomicStep: firstAction,
       readDocuments: ['AGENTS.md', 'SPEC.html'],
     })
+  })
+
+  it('detects first-action references to content documents that will not be generated', () => {
+    const missingReferences = findUnselectedContentDocumentReferences(
+      '先读取 documents/STATUS.html，再对照 context.HTML。',
+      ['spec', 'memory'],
+    )
+
+    expect(missingReferences.map((document) => document.filename)).toEqual(['STATUS.html', 'CONTEXT.html'])
+    expect(findUnselectedContentDocumentReferences('读取 SPEC.html。', ['spec'])).toHaveLength(0)
   })
 
   it('copies section and field modules into ordinary schema objects', () => {

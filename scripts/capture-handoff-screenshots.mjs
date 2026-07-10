@@ -23,7 +23,6 @@ const states = {
     additionalSelectors: ['iframe.document-preview-frame'],
     frameSelector: 'iframe.document-preview-frame',
     frameContentSelector: 'h1',
-    captureSelector: '.result-preview-grid > .plain-panel:last-child',
     hash: '#build/step-5',
     activeStep: 5,
   },
@@ -65,6 +64,13 @@ async function metrics(page, label, expected) {
     const documentTabColumns = documentTabRow
       ? getComputedStyle(documentTabRow).gridTemplateColumns.split(' ').filter(Boolean).length
       : 0
+    const moduleChoiceContentOverflows = [...document.querySelectorAll('.module-choice-button')].filter((button) => {
+      const buttonRect = button.getBoundingClientRect()
+      return [...button.children].some((child) => {
+        const childRect = child.getBoundingClientRect()
+        return childRect.left < buttonRect.left - 1 || childRect.right > buttonRect.right + 1
+      })
+    }).length
     const selectorIsVisible = (selector) => {
       const element = document.querySelector(selector)
       const rect = element?.getBoundingClientRect()
@@ -117,6 +123,7 @@ async function metrics(page, label, expected) {
       protocolMapVisible: document.body.innerText.includes('协议地图'),
       moduleWorkbenchColumns,
       documentTabColumns,
+      moduleChoiceContentOverflows,
     }
   }, { currentLabel: label, currentExpected: expected })
 }
@@ -129,15 +136,22 @@ async function capture(page, viewportName, stateName) {
     await page.locator(expected.frameSelector).scrollIntoViewIfNeeded()
     await page.waitForTimeout(150)
   }
-  if (!expected.frameSelector || expected.captureSelector || expected.viewportOnly) {
+  if (!expected.viewportOnly && !expected.frameSelector) {
     await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
   }
   await page.waitForTimeout(50)
   const file = `${viewportName}-${stateName}.png`
-  if (expected.captureSelector) {
-    await page.locator(expected.captureSelector).screenshot({ path: path.join(outputDir, file) })
-  } else {
-    await page.screenshot({ path: path.join(outputDir, file), fullPage: !expected.viewportOnly })
+  const screenshotStyle = expected.frameSelector && !expected.viewportOnly
+    ? await page.addStyleTag({ content: '.topbar, .stepper, .sticky-map { position: static !important; }' })
+    : null
+  try {
+    if (expected.captureSelector) {
+      await page.locator(expected.captureSelector).screenshot({ path: path.join(outputDir, file) })
+    } else {
+      await page.screenshot({ path: path.join(outputDir, file), fullPage: !expected.viewportOnly })
+    }
+  } finally {
+    await screenshotStyle?.evaluate((element) => element.remove())
   }
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
   return metrics(page, `${viewportName}:${stateName}`, expected)
@@ -150,12 +164,21 @@ async function markEveryContentDocumentReviewed(page) {
 
   for (let index = 0; index < documentCount; index += 1) {
     const documentTab = documentTabs.nth(index)
-    await documentTab.click()
-    const reviewButton = page.getByRole('button', { name: '标记这份文档已检查', exact: true })
+    const filename = (await documentTab.locator('code').textContent())?.trim()
+    if (!filename) throw new Error(`Content document ${index + 1} has no filename.`)
+    const mobilePicker = page.getByLabel('当前编辑文档')
+    if (await mobilePicker.isVisible()) {
+      const value = await mobilePicker.locator('option').filter({ hasText: filename }).getAttribute('value')
+      if (!value) throw new Error(`Content document ${filename} is missing from the mobile picker.`)
+      await mobilePicker.selectOption(value)
+    } else {
+      await documentTab.click()
+    }
+    const reviewButton = page.locator('.document-reviewed-button')
     await reviewButton.waitFor({ state: 'visible' })
     if (!await reviewButton.isEnabled()) throw new Error(`Content document ${index + 1} has blocking validation errors.`)
     await reviewButton.click()
-    await documentTab.locator('.document-review-state').filter({ hasText: '已检查' }).waitFor({ state: 'visible' })
+    await documentTab.locator('.document-review-state').filter({ hasText: '已检查' }).waitFor({ state: 'attached' })
   }
 
   await page.getByLabel('内容文档检查进度').getByText(`${documentCount}/${documentCount} 份文档已检查`).waitFor({ state: 'visible' })
@@ -224,6 +247,7 @@ const failures = allMetrics.filter((item) =>
   (item.expectedStep !== null && item.activeStepFullyVisible !== true) ||
   item.onboardingRawTerms.length > 0 ||
   item.protocolMapVisible ||
+  item.moduleChoiceContentOverflows > 0 ||
   (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.moduleWorkbenchColumns > 2) ||
   (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.documentTabColumns > 2) ||
   (item.label.startsWith('mobile:module-canvas') && item.documentTabColumns > 1) ||

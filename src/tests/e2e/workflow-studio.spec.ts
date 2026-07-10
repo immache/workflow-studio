@@ -23,18 +23,41 @@ async function buildToModuleCanvas(page: Page, additionalDocuments: RegExp[] = [
   await expect(page.locator('.module-builder-step')).toBeVisible()
 }
 
+async function selectBuilderDocument(page: Page, filename: string) {
+  const mobilePicker = page.getByLabel('当前编辑文档')
+  if (await mobilePicker.isVisible()) {
+    const option = mobilePicker.locator('option').filter({ hasText: filename })
+    const value = await option.getAttribute('value')
+    if (!value) throw new Error(`missing builder document option for ${filename}`)
+    await mobilePicker.selectOption(value)
+    return
+  }
+  await page.locator('.document-tab-row .module-doc-card').filter({ hasText: filename }).click()
+}
+
 async function markEveryContentDocumentReviewed(page: Page) {
   const documentTabs = page.locator('.document-tab-row .module-doc-card')
-  await expect(documentTabs.first()).toBeVisible()
+  await page.locator('.module-builder-step').waitFor({ state: 'visible' })
+  await documentTabs.first().waitFor({ state: 'attached' })
   const documentCount = await documentTabs.count()
   expect(documentCount).toBeGreaterThan(0)
 
   for (let index = 0; index < documentCount; index += 1) {
-    await documentTabs.nth(index).click()
-    const reviewButton = page.getByRole('button', { name: '标记这份文档已检查', exact: true })
+    const filename = (await documentTabs.nth(index).locator('code').textContent())?.trim()
+    if (!filename) throw new Error('missing builder document filename')
+    await selectBuilderDocument(page, filename)
+    const mobilePicker = page.getByLabel('当前编辑文档')
+    const selectedBeforeReview = await mobilePicker.isVisible() ? await mobilePicker.inputValue() : ''
+    const reviewButton = page.locator('.document-reviewed-button')
     await expect(reviewButton).toBeEnabled()
     await reviewButton.click()
     await expect(documentTabs.nth(index).locator('.document-review-state')).toHaveText('已检查')
+    if (selectedBeforeReview && index < documentCount - 1) {
+      await expect(mobilePicker).not.toHaveValue(selectedBeforeReview)
+      const editorTop = () => page.locator('.canvas-document-head').evaluate((element) => Math.round(element.getBoundingClientRect().top))
+      await expect.poll(editorTop).toBeGreaterThanOrEqual(0)
+      await expect.poll(editorTop).toBeLessThan(80)
+    }
   }
 
   await expect(page.getByLabel('内容文档检查进度').getByText(`${documentCount}/${documentCount} 份文档已检查`)).toBeVisible()
@@ -48,12 +71,10 @@ async function expectActiveBuildStepFullyVisible(page: Page, stepNumber: number)
   await expect.poll(async () => activeStep.evaluate((element) => {
     const rect = element.getBoundingClientRect()
     const scroller = element.closest('.stepper')?.getBoundingClientRect()
-    const visibleLeft = Math.max(0, scroller?.left ?? 0)
-    const visibleRight = Math.min(window.innerWidth, scroller?.right ?? window.innerWidth)
     const visibleTop = Math.max(0, scroller?.top ?? 0)
     const visibleBottom = Math.min(window.innerHeight, scroller?.bottom ?? window.innerHeight)
-    return rect.left >= visibleLeft - 1
-      && rect.right <= visibleRight + 1
+    return rect.left >= 12
+      && rect.right <= window.innerWidth - 12
       && rect.top >= visibleTop - 1
       && rect.bottom <= visibleBottom + 1
   })).toBe(true)
@@ -66,7 +87,7 @@ async function expectActiveBuildStepFullyVisible(page: Page, stepNumber: number)
 test('starts from a beginner friendly home page with two primary entries', async ({ page }) => {
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: /为未来接手项目的模型/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /为未来.*接手项目.*模型/ })).toBeVisible()
   await expect(page.getByRole('button', { name: '进入工作流入门' })).toBeVisible()
   await expect(page.getByRole('button', { name: '开始搭建工作流' })).toBeVisible()
   await expect(page.getByText('关系图与恢复路径')).toBeHidden()
@@ -110,6 +131,66 @@ test('announces route changes, exposes form errors, and has no serious beginner-
   await expect(page.locator('.builder-step .notice')).toContainText(/JSON|导入失败|解析/)
 })
 
+test('explains an empty document selection and offers a minimal recovery document', async ({ page }) => {
+  await page.goto('/#build/step-1')
+  await fillBuilderPurpose(page, '最小选择工作流')
+  await page.getByRole('button', { name: '继续选择内容文档' }).click()
+  const documentChoices = page.locator('.material-card input[type="checkbox"]')
+  for (let index = 0; index < await documentChoices.count(); index += 1) {
+    if (await documentChoices.nth(index).isChecked()) await documentChoices.nth(index).uncheck()
+  }
+
+  await expect(page.getByText(/AGENTS\.md 只负责串联规则/)).toBeVisible()
+  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
+  await expect(page.locator('.builder-step .notice')).toContainText('至少选择 1 份内容文档')
+  await expect(page).toHaveURL(/#build\/step-2$/)
+
+  await page.getByRole('button', { name: '采用最小组合：STATUS.html' }).click()
+  await expect(page.getByLabel(/STATUS\.html/)).toBeChecked()
+})
+
+test('keeps the active route when using the skip link', async ({ page }) => {
+  await page.goto('/#build/step-3')
+  const skipLink = page.getByRole('link', { name: '跳到主工作区' })
+  await skipLink.focus()
+  await expect(skipLink).toBeFocused()
+  await skipLink.press('Enter')
+
+  await expect(page).toHaveURL(/#build\/step-3$/)
+  await expect(page.locator('#main-workspace')).toBeFocused()
+  await expect(page.locator('.module-builder-step')).toBeVisible()
+})
+
+test('reports overview import failures and restores inspector focus on Escape', async ({ page }) => {
+  await page.goto('/')
+  await openAdvanced(page)
+  await page.getByLabel('从总览导入工作流 JSON 或 ZIP').setInputFiles({
+    name: 'broken.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{broken'),
+  })
+  await expect(page.locator('.entry-card .import-feedback')).toContainText(/JSON|导入失败|解析/)
+
+  const inspectorTrigger = page.getByRole('button', { name: '检查', exact: true })
+  await inspectorTrigger.click()
+  const inspector = page.getByRole('dialog', { name: '检查与修复' })
+  await expect(inspector).toHaveAttribute('aria-modal', 'true')
+  await expect(page.getByRole('button', { name: '关闭检查器' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(inspector).toHaveCount(0)
+  await expect(inspectorTrigger).toBeFocused()
+})
+
+test('contains a long unbroken workflow name on mobile', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile overflow regression')
+  await page.goto('/#build/step-1')
+  await fillBuilderPurpose(page, 'X'.repeat(180))
+  await page.getByRole('button', { name: '继续选择内容文档' }).click()
+
+  await expect.poll(() => page.evaluate(() => Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) - document.documentElement.clientWidth)).toBe(0)
+  await expect(page.locator('.build-head h1')).toBeVisible()
+})
+
 test('builds a modular workflow through document selection and protocol review', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '开始搭建工作流' }).click()
@@ -130,15 +211,13 @@ test('builds a modular workflow through document selection and protocol review',
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
 
   await expect(page.getByRole('heading', { name: '逐份文档搭建模块。' })).toBeVisible()
-  const statusDocument = page.getByRole('button', { name: /STATUS\.html/ })
-  await expect(statusDocument).toBeVisible()
-  await statusDocument.click()
+  await selectBuilderDocument(page, 'STATUS.html')
   await expect(page.locator('.write-map').getByText('写入地图', { exact: true })).toBeVisible()
   await expect(page.locator('.write-map').first()).toContainText('STATUS.html > 文档职责')
 
   const moduleCanvas = page.locator('.module-canvas')
   const documentMeta = moduleCanvas.locator('.canvas-document-head')
-  await documentMeta.getByLabel('文档标题').fill('交付状态快照')
+  await documentMeta.getByLabel('显示名').fill('交付状态快照')
   await documentMeta.getByLabel('这份文档只负责什么').fill('只记录本轮仍有效的目标、验证证据和下一原子步骤。')
 
   const firstSection = moduleCanvas.locator('.module-section-editor').first()
@@ -158,27 +237,30 @@ test('builds a modular workflow through document selection and protocol review',
   await expect(firstSection.locator('.module-field-editor')).toHaveCount(fieldCountBeforeCopy + 1)
   await expect(firstSection.locator('.module-field-editor').nth(1).getByLabel('字段名称')).toHaveValue('本轮交付目标 副本')
 
-  await firstSection.getByRole('button', { name: '证据或验证方式', exact: true }).click()
-  const addedPresetField = firstSection.getByRole('button', { name: '证据或验证方式（已加入）', exact: true })
+  await firstSection.locator('.field-library-band .module-choice-button').filter({ hasText: '证据或验证方式' }).click()
+  const addedPresetField = firstSection.locator('.field-library-band .module-choice-button').filter({ hasText: '证据或验证方式（已加入）' })
   await expect(addedPresetField).toBeDisabled()
 
   await markEveryContentDocumentReviewed(page)
 
   await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
   await expect(page.getByRole('heading', { name: '审查系统生成的入口协议草案。' })).toBeVisible()
-  const protocolModules = page.locator('.protocol-review-grid .module-section-editor')
-  await expect(protocolModules).toHaveCount(5)
-  await expect(protocolModules.first().getByLabel('章节名称')).toHaveValue('文档清单')
-  await expect(protocolModules.nth(1).getByLabel('章节名称')).toHaveValue('读取顺序')
-  await expect(protocolModules.first().getByLabel('当前内容')).toHaveValue(/USER\.html[\s\S]*MEMORY\.html[\s\S]*CONTEXT\.html/)
-  await expect(protocolModules.first().getByRole('button', { name: '上移章节 文档清单' })).toBeDisabled()
-  await expect(protocolModules.first().getByRole('button', { name: '下移章节 文档清单' })).toBeVisible()
-  await expect(protocolModules.first().getByRole('button', { name: '复制章节 文档清单' })).toBeVisible()
-  await expect(protocolModules.first().getByRole('button', { name: '删除章节 文档清单' })).toBeVisible()
+  const protocolSwitches = page.locator('.protocol-section-switcher .section-switch')
+  const protocolModule = page.locator('.protocol-review-grid .module-section-editor')
+  await expect(protocolSwitches).toHaveCount(5)
+  await expect(protocolModule).toHaveCount(1)
+  await expect(protocolModule.getByLabel('章节名称')).toHaveValue('文档清单')
+  await expect(protocolModule.getByLabel('当前内容')).toHaveValue(/USER\.html[\s\S]*MEMORY\.html[\s\S]*CONTEXT\.html/)
+  await expect(protocolModule.getByRole('button', { name: '上移章节 文档清单' })).toBeDisabled()
+  await expect(protocolModule.getByRole('button', { name: '下移章节 文档清单' })).toBeVisible()
+  await expect(protocolModule.getByRole('button', { name: '复制章节 文档清单' })).toBeVisible()
+  await expect(protocolModule.getByRole('button', { name: '删除章节 文档清单' })).toBeVisible()
+  await protocolSwitches.filter({ hasText: '读取顺序' }).click()
+  await expect(protocolModule.getByLabel('章节名称')).toHaveValue('读取顺序')
   await expect(page.getByRole('button', { name: '新增协议模块' })).toBeVisible()
 
   await page.getByRole('button', { name: '查看结果预览' }).click()
-  await expect(page.getByRole('heading', { name: '结果预览：文件树、模块分布和恢复路径。' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /结果预览.*文件树.*模块分布.*恢复路径/ })).toBeVisible()
   await expect(page.getByText('documents/AGENTS.md')).toBeVisible()
   await expect(page.getByText('documents/CONTEXT.html')).toBeVisible()
   const htmlPreview = page.locator('iframe.document-preview-frame')
@@ -194,14 +276,24 @@ test('allows a static workflow to omit STATUS.html and generates conditional rea
   await page.getByRole('button', { name: '继续选择内容文档' }).click()
   await page.getByLabel(/STATUS\.html/).uncheck()
   await expect(page.getByLabel(/STATUS\.html/)).not.toBeChecked()
+  await expect(page.getByRole('alert').filter({ hasText: '第一动作仍引用未选择的文档' })).toContainText('STATUS.html')
+  await expect(page.getByRole('button', { name: '生成文档并进入模块画布' })).toBeDisabled()
+  await page.getByRole('button', { name: '修改第一动作' }).click()
+  await expect(page.getByLabel('恢复后希望模型立刻做什么？')).toBeFocused()
+  await page.getByLabel('恢复后希望模型立刻做什么？').fill('读取入口协议后核对稳定计划。')
+  await page.getByRole('button', { name: '继续选择内容文档' }).click()
+  await expect(page.getByLabel(/STATUS\.html/)).not.toBeChecked()
+  await expect(page.getByRole('alert').filter({ hasText: '第一动作仍引用未选择的文档' })).toHaveCount(0)
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
   await markEveryContentDocumentReviewed(page)
   await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
 
-  const readOrder = page.locator('.protocol-review-grid .module-section-editor').nth(1).getByLabel('当前内容')
+  await page.locator('.protocol-section-switcher .section-switch').filter({ hasText: '读取顺序' }).click()
+  const readOrder = page.locator('textarea[name="protocol-recovery-order-value"]')
   await expect(readOrder).toHaveValue(/必读：AGENTS\.md -> SPEC\.html/)
   await expect(readOrder).toHaveValue(/按需读取：MEMORY\.html/)
   await expect(readOrder).not.toHaveValue(/STATUS\.html/)
+  await expect(page.locator('textarea[name="protocol-fallback-next-atomic-step-value"]')).toHaveValue('读取入口协议后核对稳定计划。')
 })
 
 test('persists the builder draft and selected documents across a refresh', async ({ page }) => {
@@ -322,24 +414,42 @@ test('keeps the active builder step visible without horizontal page overflow on 
   await page.goto('/')
   await page.getByRole('button', { name: '开始搭建工作流' }).click()
   await expectActiveBuildStepFullyVisible(page, 1)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
+  await expect.poll(() => page.locator('.topbar').evaluate((element) => getComputedStyle(element).position)).toBe('static')
+  await expect.poll(() => page.locator('.topbar').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(72)
 
   await fillBuilderPurpose(page, '移动端回归工作流')
   await page.getByRole('button', { name: '继续选择内容文档' }).click()
   await expect(page.locator('#materials-title')).toBeVisible()
   await expectActiveBuildStepFullyVisible(page, 2)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
 
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
   await expect(page.locator('.module-builder-step')).toBeVisible()
   await expectActiveBuildStepFullyVisible(page, 3)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
+  await expect(page.locator('.canvas-section-list .module-section-editor')).toHaveCount(1)
+  await expect(page.locator('.canvas-section-list .module-field-editor[open]')).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(5000)
 
   await markEveryContentDocumentReviewed(page)
   await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
   await expect(page.locator('.protocol-builder-step')).toBeVisible()
   await expectActiveBuildStepFullyVisible(page, 4)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
+  await expect(page.locator('.protocol-review-grid .module-section-editor')).toHaveCount(1)
+  await expect(page.locator('.protocol-review-grid .module-field-editor[open]')).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(4000)
 
   await page.getByRole('button', { name: '查看结果预览' }).click()
   await expect(page.locator('#preview-title')).toBeVisible()
   await expectActiveBuildStepFullyVisible(page, 5)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
+
+  await page.getByRole('button', { name: '进入演练与导出' }).click()
+  await expect(page.locator('#export-ready-title')).toBeVisible()
+  await expectActiveBuildStepFullyVisible(page, 6)
+  await expect(page.getByLabel('写入地图')).toBeVisible()
 })
 
 test('supports the core advanced workflow design path', async ({ page }) => {
@@ -352,20 +462,20 @@ test('supports the core advanced workflow design path', async ({ page }) => {
   await expect(page.getByText('关系图与恢复路径')).toBeVisible()
   await expect(page.locator('.graph-node')).toHaveCount(6)
 
-  await page.getByRole('button', { name: /写给未来模型看的资料/ }).click()
+  await page.getByRole('link', { name: /写给未来模型看的资料/ }).click()
   await expect(page).toHaveURL(/#advanced\/documents$/)
   await expect(page.getByRole('heading', { name: '写给未来模型看的资料' })).toBeVisible()
   await page.getByLabel('标题').first().fill('自动化验收协议')
 
-  await page.getByRole('button', { name: /演练断线后如何恢复/ }).click()
+  await page.getByRole('link', { name: /演练断线后如何恢复/ }).click()
   await expect(page).toHaveURL(/#advanced\/simulation$/)
   await page.getByRole('button', { name: /演练新会话恢复/ }).click()
   await expect(page.getByRole('heading', { name: '演练断线后如何恢复' })).toBeVisible()
   await expect(page.getByText('推导下一原子步骤')).toBeVisible()
 
-  await page.getByRole('button', { name: /生成可复制的工作流包/ }).click()
+  await page.getByRole('link', { name: /生成可复制的工作流包/ }).click()
   await expect(page).toHaveURL(/#advanced\/export$/)
-  await expect(page.getByRole('heading', { name: '生成可复制的工作流包' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /生成可复制的.*工作流包/ })).toBeVisible()
   await expect(page.getByRole('button', { name: '下载工作流包', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'workflow.json', exact: true })).toBeVisible()
   await expect(page.frameLocator('iframe.document-preview-frame').getByRole('heading', { level: 1, name: '稳定计划' })).toBeVisible()
@@ -376,16 +486,16 @@ test('creates a blank workflow, resolves validation error, switches format, and 
   await openAdvanced(page)
   await page.getByRole('button', { name: '创建最小工作流' }).click()
 
-  await page.getByRole('button', { name: /生成可复制的工作流包/ }).click()
+  await page.getByRole('link', { name: /生成可复制的工作流包/ }).click()
   await expect(page.getByRole('button', { name: '下载工作流包', exact: true })).toBeDisabled()
   await expect(page.getByText('必填字段为空').first()).toBeVisible()
 
-  await page.getByRole('button', { name: /写给未来模型看的资料/ }).click()
+  await page.getByRole('link', { name: /写给未来模型看的资料/ }).click()
   await page.getByLabel('当前内容').first().fill('AGENTS.md -> SPEC.html -> STATUS.html')
   await page.getByRole('button', { name: /STATUS\.html/ }).click()
   await page.locator('[data-field="blank-next-atomic-step"]').getByLabel('当前内容').fill('继续完善状态快照中的当前目标。')
 
-  await page.getByRole('button', { name: /生成可复制的工作流包/ }).click()
+  await page.getByRole('link', { name: /生成可复制的工作流包/ }).click()
   await page.getByLabel('主维护格式').selectOption('markdown')
   await expect(page.getByRole('button', { name: '下载工作流包', exact: true })).toBeEnabled()
 
@@ -406,7 +516,7 @@ test('creates a blank workflow, resolves validation error, switches format, and 
 test('supports advanced field validation, hidden suggestions, and delete confirmation', async ({ page }) => {
   await page.goto('/')
   await openAdvanced(page)
-  await page.getByRole('button', { name: /写给未来模型看的资料/ }).click()
+  await page.getByRole('link', { name: /写给未来模型看的资料/ }).click()
 
   await page.getByLabel('当前内容').first().fill('短')
   await page.getByText('高级校验与底层值').first().click()
@@ -462,7 +572,7 @@ test('supports advanced field validation, hidden suggestions, and delete confirm
 test('keeps focus while editing source priority labels', async ({ page }) => {
   await page.goto('/')
   await openAdvanced(page)
-  await page.getByRole('button', { name: /规定未来模型怎么读/ }).click()
+  await page.getByRole('link', { name: /规定未来模型怎么读/ }).click()
 
   const sourceName = page.getByLabel('显示名称').first()
   await sourceName.fill('')

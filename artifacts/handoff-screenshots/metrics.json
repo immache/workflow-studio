@@ -19,7 +19,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:learn",
@@ -41,7 +42,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:build-purpose",
@@ -65,10 +67,11 @@
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:document-selection",
@@ -95,7 +98,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:module-canvas",
@@ -122,7 +126,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 2,
-    "documentTabColumns": 2
+    "documentTabColumns": 2,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:agents-draft-review",
@@ -149,7 +154,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:result-preview",
@@ -173,10 +179,11 @@
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "desktop:export",
@@ -198,7 +205,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:home",
@@ -220,7 +228,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:learn",
@@ -242,7 +251,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:build-purpose",
@@ -260,16 +270,17 @@
     "activeStepRect": {
       "left": 20,
       "right": 170,
-      "top": 418.484375,
-      "bottom": 467.484375
+      "top": 377.4375,
+      "bottom": 426.4375
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:document-selection",
@@ -287,8 +298,8 @@
     "activeStepRect": {
       "left": 178,
       "right": 328,
-      "top": 262.3125,
-      "bottom": 311.3125
+      "top": 221.265625,
+      "bottom": 270.265625
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -296,7 +307,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:module-canvas",
@@ -314,8 +326,8 @@
     "activeStepRect": {
       "left": 336,
       "right": 486,
-      "top": 262.3125,
-      "bottom": 311.3125
+      "top": 221.265625,
+      "bottom": 270.265625
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -323,7 +335,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 1,
-    "documentTabColumns": 2
+    "documentTabColumns": 2,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:agents-draft-review",
@@ -341,8 +354,8 @@
     "activeStepRect": {
       "left": 494,
       "right": 644,
-      "top": 262.3125,
-      "bottom": 311.3125
+      "top": 221.265625,
+      "bottom": 270.265625
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -350,7 +363,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:result-preview",
@@ -368,16 +382,17 @@
     "activeStepRect": {
       "left": 652,
       "right": 802,
-      "top": 262.3125,
-      "bottom": 311.3125
+      "top": 221.265625,
+      "bottom": 270.265625
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "tablet:export",
@@ -399,7 +414,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:home",
@@ -421,7 +437,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:learn",
@@ -443,7 +460,8 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:build-purpose",
@@ -460,17 +478,18 @@
     "activeStepFullyVisible": true,
     "activeStepRect": {
       "left": 16,
-      "right": 148,
-      "top": 379.3125,
-      "bottom": 428.3125
+      "right": 377,
+      "top": 347.3125,
+      "bottom": 401.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:document-selection",
@@ -486,10 +505,10 @@
     "activeStepNumber": "2",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 114,
-      "right": 246,
-      "top": 200.546875,
-      "bottom": 249.546875
+      "left": 16,
+      "right": 377,
+      "top": 168.546875,
+      "bottom": 222.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -497,7 +516,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:module-canvas",
@@ -513,10 +533,10 @@
     "activeStepNumber": "3",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 114,
-      "right": 246,
-      "top": 200.546875,
-      "bottom": 249.546875
+      "left": 16,
+      "right": 377,
+      "top": 168.546875,
+      "bottom": 222.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -524,7 +544,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 1,
-    "documentTabColumns": 1
+    "documentTabColumns": 1,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:agents-draft-review",
@@ -540,10 +561,10 @@
     "activeStepNumber": "4",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 114,
-      "right": 246,
-      "top": 200.546875,
-      "bottom": 249.546875
+      "left": 16,
+      "right": 377,
+      "top": 168.546875,
+      "bottom": 222.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -551,7 +572,8 @@
     "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:result-preview",
@@ -567,18 +589,19 @@
     "activeStepNumber": "5",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 114,
-      "right": 246,
-      "top": 200.546875,
-      "bottom": 249.546875
+      "left": 16,
+      "right": 377,
+      "top": 168.546875,
+      "bottom": 222.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
     "homePrimaryEntries": 0,
-    "writeMapVisible": false,
+    "writeMapVisible": true,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   },
   {
     "label": "mobile:export",
@@ -600,6 +623,7 @@
     "writeMapVisible": false,
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
-    "documentTabColumns": 0
+    "documentTabColumns": 0,
+    "moduleChoiceContentOverflows": 0
   }
 ]

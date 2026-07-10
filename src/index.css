@@ -44,6 +44,13 @@ select {
 }
 
 button,
+a,
+label,
+summary {
+  -webkit-tap-highlight-color: rgb(217 119 87 / 14%);
+}
+
+button,
 label,
 select,
 input,
