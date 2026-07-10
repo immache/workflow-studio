@@ -3,10 +3,10 @@ import JSZip from 'jszip'
 import { createCurrentStandardWorkflow, createBlankWorkflow } from '../../data/presets/current-standard-workflow'
 import { exportHtmlDocuments } from '../../domain/export-html'
 import { exportMarkdownDocuments, exportReadme } from '../../domain/export-markdown'
-import { createWorkflowZip } from '../../domain/export-zip'
+import { createWorkflowZip, packageName } from '../../domain/export-zip'
 import { parseImportedWorkflow, parseWorkflowJson } from '../../domain/import-export'
 import { scoreWorkflow } from '../../domain/scoring'
-import { scalarValue, SCHEMA_VERSION } from '../../domain/schema'
+import { fieldValueToText, scalarValue, SCHEMA_VERSION } from '../../domain/schema'
 import { simulateRecovery } from '../../domain/simulation'
 import { validateWorkflow, warningSchemaHash } from '../../domain/validation'
 import { useWorkflowStore } from '../../store/workflow-store'
@@ -77,7 +77,7 @@ describe('Workflow Studio domain model', () => {
     await expect(createWorkflowZip(workflow)).resolves.toMatchObject({
       files: expect.objectContaining({
         'workflow.json': expect.any(String),
-        'documents/AGENTS.html': expect.any(String),
+        'documents/AGENTS.md': expect.any(String),
         'documents/STATUS.html': expect.any(String),
         'documents/MEMORY.html': expect.any(String),
       }),
@@ -106,13 +106,40 @@ describe('Workflow Studio domain model', () => {
     }
   })
 
+  it('cleans structured and field-value references when the store removes a document', async () => {
+    await useWorkflowStore.getState().createPresetProject()
+    const before = useWorkflowStore.getState().workflow
+    const removed = before.documents.find((document) => document.id === 'spec')
+    if (!removed) throw new Error('missing plan document fixture')
+    expect(before.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(true)
+    expect(before.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(true)
+
+    useWorkflowStore.getState().removeDocument(removed.id)
+    const workflow = useWorkflowStore.getState().workflow
+
+    expect(workflow.documents.some((document) => document.id === removed.id)).toBe(false)
+    expect(workflow.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(false)
+    expect(workflow.rules.sourcePriority.some((rule) => rule.targetId === removed.id || rule.orderedSources.some((source) => source.documentId === removed.id))).toBe(false)
+    expect(workflow.rules.updateTriggers.some((trigger) => trigger.targetDocumentId === removed.id)).toBe(false)
+    expect(workflow.rules.completionChecks.some((check) => check.relatedDocumentIds.includes(removed.id))).toBe(false)
+    expect(workflow.documents.some((document) => document.readPolicy.dependsOnDocumentIds.includes(removed.id))).toBe(false)
+    expect(workflow.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(false)
+  })
+
   it('simulates a new session recovery path', () => {
     const workflow = createCurrentStandardWorkflow()
+    const nextStepField = workflow.documents
+      .flatMap((document) => document.sections)
+      .flatMap((section) => section.fields)
+      .find((field) => field.id === 'next-atomic-step')
+    if (!nextStepField) throw new Error('missing next atomic step fixture')
+    nextStepField.id = 'status-current-next-atomic-step'
+    nextStepField.value = scalarValue('运行领域回归测试并检查结果。')
     const result = simulateRecovery(workflow, 'new-session')
 
     expect(result.status).toBe('pass')
     expect(result.readDocuments).toContain('AGENTS.md')
-    expect(result.nextAtomicStep).toMatch(/下一原子步骤/)
+    expect(result.nextAtomicStep).toBe('运行领域回归测试并检查结果。')
   })
 
   it('reports source conflicts with selected source details', () => {
@@ -131,8 +158,40 @@ describe('Workflow Studio domain model', () => {
     expect(html['SPEC.html']).toContain('data-guidance="true"')
     expect(html['SPEC.html']).not.toContain('<script')
     expect(html['SPEC.html']).not.toContain('https://')
-    expect(markdown['SPEC.md']).toContain('字段 ID')
+    expect(markdown['SPEC.md']).toContain('### 项目使命')
     expect(markdown['SPEC.md']).toContain('说明：')
+  })
+
+  it('keeps AGENTS.md alongside HTML content documents in HTML maintenance packages', async () => {
+    const pkg = await createWorkflowZip(createCurrentStandardWorkflow())
+    const primaryFiles = Object.keys(pkg.files).filter((filename) => filename.startsWith('documents/')).sort()
+
+    expect(primaryFiles).toEqual([
+      'documents/AGENTS.md',
+      'documents/CONTEXT.html',
+      'documents/MEMORY.html',
+      'documents/SPEC.html',
+      'documents/STATUS.html',
+      'documents/USER.html',
+    ])
+    expect(pkg.files['documents/AGENTS.md']).toContain('AGENTS.md -> SPEC.html -> STATUS.html')
+    expect(pkg.files['documents/SPEC.html']).toContain('<!doctype html>')
+    expect(pkg.files['documents/AGENTS.html']).toBeUndefined()
+  })
+
+  it('exports every Markdown document as .md and rewrites document references', () => {
+    const markdown = exportMarkdownDocuments(createCurrentStandardWorkflow())
+
+    expect(Object.keys(markdown).sort()).toEqual([
+      'AGENTS.md',
+      'CONTEXT.md',
+      'MEMORY.md',
+      'SPEC.md',
+      'STATUS.md',
+      'USER.md',
+    ])
+    expect(markdown['AGENTS.md']).toContain('AGENTS.md -> SPEC.md -> STATUS.md')
+    expect(markdown['AGENTS.md']).not.toMatch(/(?:SPEC|STATUS|USER|MEMORY|CONTEXT)\.html/)
   })
 
   it('round-trips workflow.json and exported ZIP packages', async () => {
@@ -149,12 +208,37 @@ describe('Workflow Studio domain model', () => {
     expect(imported.documents.map((document) => document.filename)).toContain('STATUS.html')
   })
 
+  it('applies packageNamePattern when naming ZIP exports', () => {
+    const workflow = createCurrentStandardWorkflow()
+    workflow.name = '客户支持 / Alpha'
+    workflow.exportSettings = { ...workflow.exportSettings, packageNamePattern: '归档-{name}-2026.zip' }
+
+    expect(packageName(workflow)).toBe('归档-客户支持-Alpha-2026.zip')
+  })
+
   it('blocks unsafe document filenames before ZIP export', async () => {
     const workflow = createCurrentStandardWorkflow()
     workflow.documents[1].filename = '../SPEC.html'
 
     expect(validateWorkflow(workflow).some((issue) => issue.ruleId === 'export-safe-filename' && issue.severity === 'error')).toBe(true)
     await expect(createWorkflowZip(workflow)).rejects.toThrow(/导出被阻止/)
+  })
+
+  it('blocks filenames that collide only after export projection', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    const preference = workflow.documents.find((document) => document.id === 'user')
+    if (!preference) throw new Error('missing preference document fixture')
+    preference.filename = 'SPEC.md'
+
+    const collisionRules = validateWorkflow(workflow)
+      .filter((issue) => issue.severity === 'error' && issue.ruleId.includes('filename-collision'))
+      .map((issue) => issue.ruleId)
+
+    expect(collisionRules).toEqual(expect.arrayContaining([
+      'export-html-filename-collision',
+      'export-markdown-filename-collision',
+    ]))
+    await expect(createWorkflowZip(workflow)).rejects.toThrow(/导出文件名冲突/)
   })
 
   it('blocks missing realtime status and missing next atomic step', async () => {
@@ -169,6 +253,18 @@ describe('Workflow Studio domain model', () => {
     if (!nextStepField) throw new Error('missing test fixture')
     nextStepField.value = { kind: 'empty' }
     expect(validateWorkflow(noNextStep).some((issue) => issue.ruleId === 'recovery-next-atomic-step-value' && issue.severity === 'error')).toBe(true)
+  })
+
+  it('requires the protocol document to be first in recovery order', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const protocolStep = workflow.rules.recoveryOrder.shift()
+    if (!protocolStep) throw new Error('missing protocol recovery step fixture')
+    workflow.rules.recoveryOrder.push(protocolStep)
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-protocol-first', severity: 'error' }),
+    ]))
+    expect(simulateRecovery(workflow, 'new-session').status).toBe('blocked')
   })
 
   it('blocks recovery simulation when the status entry is missing', () => {
@@ -263,6 +359,13 @@ describe('Workflow Studio domain model', () => {
     const invalidNested = createCurrentStandardWorkflow()
     invalidNested.documents[0].sections[0].fields[0].type = 'invalid' as never
     await expect(parseWorkflowJson(JSON.stringify(invalidNested))).rejects.toThrow(/field.type/)
+  })
+
+  it('rejects malformed field options during import', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    workflow.documents[0].sections[0].fields[0].options = [{ value: 'invalid' }] as never
+
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/field\.option\.label/)
   })
 
   it('bounds direct JSON file imports before reading oversized files and honors cancellation', async () => {

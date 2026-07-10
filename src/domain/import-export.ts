@@ -27,6 +27,8 @@ const maintenanceFormats = ['html', 'markdown'] as const
 const lifecycles = ['realtime', 'stable', 'historical', 'preference', 'reference', 'validation', 'mixed'] as const
 const documentRoles = ['protocol', 'plan', 'status', 'preference', 'history', 'context', 'validation', 'custom'] as const
 const fieldTypes = ['shortText', 'longText', 'richText', 'select', 'multiSelect', 'boolean', 'date', 'path', 'url', 'email', 'code', 'list', 'table', 'reference'] as const
+const displayFormats = ['paragraph', 'checklist', 'steps', 'key-value', 'decision-table', 'timeline', 'code', 'path-list'] as const
+const validationPredicates = ['non-empty', 'valid-path', 'valid-url', 'valid-email', 'matches-pattern', 'custom'] as const
 const sourceTypes = ['latest-user-instruction', 'workspace-fact', 'current-status', 'stable-plan', 'user-preference', 'session-history', 'memory-history', 'context-reference', 'older-history'] as const
 const recencyPolicies = ['prefer-newer', 'ignore-recency', 'manual'] as const
 
@@ -287,7 +289,27 @@ function assertWorkflowShape(value: unknown): asserts value is WorkflowSchema {
         assertBoolean(field.allowEmpty, 'field.allowEmpty')
         assertBoolean(field.repeatable, 'field.repeatable')
         assertFieldValue(field.value)
-        if (!isRecord(field.validation) || !Array.isArray(field.validation.customRules)) throw new Error('field.validation 结构无效。')
+        if (field.displayFormat !== undefined) assertOneOf(field.displayFormat, displayFormats, 'field.displayFormat')
+        if (field.options !== undefined) {
+          assertRecordArray(field.options, 'field.options')
+          for (const option of field.options) {
+            assertString(option.value, 'field.option.value')
+            assertString(option.label, 'field.option.label')
+            if (option.description !== undefined) assertString(option.description, 'field.option.description')
+          }
+        }
+        if (!isRecord(field.validation)) throw new Error('field.validation 结构无效。')
+        if (field.validation.minLength !== undefined) assertNumber(field.validation.minLength, 'field.validation.minLength')
+        if (field.validation.maxLength !== undefined) assertNumber(field.validation.maxLength, 'field.validation.maxLength')
+        if (field.validation.pattern !== undefined) assertString(field.validation.pattern, 'field.validation.pattern')
+        if (field.validation.allowedValues !== undefined) assertStringArray(field.validation.allowedValues, 'field.validation.allowedValues')
+        assertRecordArray(field.validation.customRules, 'field.validation.customRules')
+        for (const rule of field.validation.customRules) {
+          assertString(rule.id, 'field.validation.rule.id')
+          assertString(rule.description, 'field.validation.rule.description')
+          assertOneOf(rule.severity, ['error', 'warning', 'suggestion', 'pass'] as const, 'field.validation.rule.severity')
+          assertOneOf(rule.predicate, validationPredicates, 'field.validation.rule.predicate')
+        }
       }
     }
   }
@@ -306,6 +328,7 @@ function assertWorkflowShape(value: unknown): asserts value is WorkflowSchema {
   for (const rule of value.rules.sourcePriority) {
     assertString(rule.id, 'sourcePriority.id')
     assertOneOf(rule.scope, ['global', 'document', 'section', 'field'] as const, 'sourcePriority.scope')
+    if (rule.targetId !== undefined) assertString(rule.targetId, 'sourcePriority.targetId')
     assertRecordArray(rule.orderedSources, 'sourcePriority.orderedSources')
     assertOneOf(rule.tieBreaker, ['newer', 'explicit-user-confirmation', 'manual-review'] as const, 'sourcePriority.tieBreaker')
     assertString(rule.reason, 'sourcePriority.reason')
@@ -314,6 +337,7 @@ function assertWorkflowShape(value: unknown): asserts value is WorkflowSchema {
       assertString(source.label, 'source.label')
       assertNumber(source.priority, 'source.priority')
       assertOneOf(source.recencyPolicy, recencyPolicies, 'source.recencyPolicy')
+      if (source.documentId !== undefined) assertString(source.documentId, 'source.documentId')
     }
   }
   for (const trigger of value.rules.updateTriggers) {

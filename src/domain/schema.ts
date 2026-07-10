@@ -2,6 +2,16 @@ export const SCHEMA_VERSION = '1.0.0'
 
 export type MaintenanceFormat = 'html' | 'markdown'
 
+export type DisplayFormatId =
+  | 'paragraph'
+  | 'checklist'
+  | 'steps'
+  | 'key-value'
+  | 'decision-table'
+  | 'timeline'
+  | 'code'
+  | 'path-list'
+
 export type InformationLifecycle =
   | 'realtime'
   | 'stable'
@@ -78,6 +88,7 @@ export type WorkflowField = {
   options?: FieldOption[]
   repeatable: boolean
   validation: FieldValidation
+  displayFormat?: DisplayFormatId
 }
 
 export type WorkflowSection = {
@@ -349,6 +360,7 @@ export function createField(input: {
   required?: boolean
   allowEmpty?: boolean
   value?: FieldValue
+  displayFormat?: DisplayFormatId
 }): WorkflowField {
   return {
     id: input.id,
@@ -361,6 +373,7 @@ export function createField(input: {
     value: input.value ?? emptyValue(),
     repeatable: false,
     validation: { customRules: [] },
+    displayFormat: input.displayFormat,
   }
 }
 

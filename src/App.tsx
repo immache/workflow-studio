@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
   Boxes,
   CheckCircle2,
+  Copy,
   Download,
   FileArchive,
   FileJson,
@@ -15,13 +19,15 @@ import {
   PanelRightOpen,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Trash2,
   X,
 } from 'lucide-react'
 import './App.css'
-import { exportHtmlDocuments } from './domain/export-html'
-import { exportMarkdownDocuments, exportReadme } from './domain/export-markdown'
+import { exportReadme } from './domain/export-markdown'
+import { exportDocumentsForFormat } from './domain/export-documents'
+import { projectDocumentFilename } from './domain/export-naming'
 import { createWorkflowZip, packageName } from './domain/export-zip'
 import { dimensionLabels, scoreWorkflow } from './domain/scoring'
 import {
@@ -35,6 +41,7 @@ import {
   type WorkflowDocument,
   type WorkflowField,
   type WorkflowSchema,
+  type WorkflowSection,
 } from './domain/schema'
 import { scenarioLabels, simulateRecovery } from './domain/simulation'
 import { hasBlockingErrors, validateWorkflow } from './domain/validation'
@@ -63,7 +70,71 @@ type UiCopy = {
 }
 
 type AppMode = 'home' | 'learn' | 'build' | 'advanced'
-type BuildStep = 0 | 1 | 2 | 3 | 4 | 5 | 6
+type BuildStep = 0 | 1 | 2 | 3 | 4 | 5
+
+type BuilderDraft = {
+  projectName: string
+  recoveryRisk: string
+  firstAction: string
+  selectedContentDocs: ContentDocumentId[]
+  selectedCanvasDocumentId: string
+  reviewedDocumentIds: string[]
+  protocolNeedsInitialGeneration: boolean
+  hasBuilderProject: boolean
+}
+
+const BUILDER_DRAFT_KEY = 'workflow-studio.builder-draft.v1'
+
+function readBuilderDraft(defaultProjectName: string): BuilderDraft {
+  const fallback: BuilderDraft = {
+    projectName: defaultProjectName,
+    recoveryRisk: '目标、下一步和当前阻塞最容易丢失。',
+    firstAction: '读取 STATUS.html，确认下一原子步骤。',
+    selectedContentDocs: standardDocumentCards.filter((item) => item.recommended || item.required).map((item) => item.id),
+    selectedCanvasDocumentId: 'content-status',
+    reviewedDocumentIds: [],
+    protocolNeedsInitialGeneration: false,
+    hasBuilderProject: false,
+  }
+  try {
+    const value = window.localStorage.getItem(BUILDER_DRAFT_KEY)
+    if (!value) return fallback
+    const parsed = JSON.parse(value) as Partial<BuilderDraft>
+    const allowedIds = new Set(standardDocumentCards.map((item) => item.id))
+    const selectedContentDocs = Array.isArray(parsed.selectedContentDocs)
+      ? parsed.selectedContentDocs.filter((id): id is ContentDocumentId => allowedIds.has(id as ContentDocumentId))
+      : fallback.selectedContentDocs
+    for (const item of standardDocumentCards) {
+      if (item.required && !selectedContentDocs.includes(item.id)) selectedContentDocs.push(item.id)
+    }
+    return {
+      projectName: typeof parsed.projectName === 'string' ? parsed.projectName : fallback.projectName,
+      recoveryRisk: typeof parsed.recoveryRisk === 'string' ? parsed.recoveryRisk : fallback.recoveryRisk,
+      firstAction: typeof parsed.firstAction === 'string' ? parsed.firstAction : fallback.firstAction,
+      selectedContentDocs: selectedContentDocs.length > 0 ? selectedContentDocs : fallback.selectedContentDocs,
+      selectedCanvasDocumentId: typeof parsed.selectedCanvasDocumentId === 'string' ? parsed.selectedCanvasDocumentId : fallback.selectedCanvasDocumentId,
+      reviewedDocumentIds: Array.isArray(parsed.reviewedDocumentIds)
+        ? parsed.reviewedDocumentIds.filter((id): id is string => typeof id === 'string')
+        : [],
+      protocolNeedsInitialGeneration: parsed.protocolNeedsInitialGeneration === true,
+      hasBuilderProject: parsed.hasBuilderProject === true,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function routeFromHash(): { mode: AppMode; step: BuildStep } {
+  const hash = window.location.hash.replace(/^#/, '')
+  const buildMatch = hash.match(/^build\/step-([1-6])$/)
+  if (buildMatch) return { mode: 'build', step: (Number(buildMatch[1]) - 1) as BuildStep }
+  if (hash === 'learn' || hash === 'advanced' || hash === 'home') return { mode: hash, step: 0 }
+  return { mode: 'home', step: 0 }
+}
+
+function routeHash(mode: AppMode, step: BuildStep): string {
+  return mode === 'build' ? `#build/step-${step + 1}` : `#${mode}`
+}
 
 const viewItems: { id: AppView; label: string; shortLabel: string; detail: string; icon: typeof Layers3 }[] = [
   { id: 'overview', label: '当前工作流能不能交付', shortLabel: '能否交付', detail: '查看阻塞项、必填清单和下一步建议。', icon: Layers3 },
@@ -81,7 +152,8 @@ const learnChapters = [
     example: '好写法：先读 AGENTS，再读状态，最后按需看历史。坏写法：把所有背景都堆在一个文件里。',
     mistake: '常见误区：把工作流写成项目介绍，未来模型读完仍不知道下一步该做什么。',
     help: '先把它想成接班说明。它不追求完整讲完项目，而是让未来模型在最短时间内恢复目标、边界和下一步。',
-    action: '去选择起点',
+    action: '从用途说明开始',
+    buildStep: 0 as BuildStep,
   },
   {
     title: '好工作流的标准',
@@ -90,7 +162,8 @@ const learnChapters = [
     example: '如果一个新会话只靠文档就能知道下一步做什么，这套工作流才算站得住。',
     mistake: '常见误区：文档很多，但同一事实散落在多处，更新时不知道该改哪一个。',
     help: '好工作流不是文件越多越好。每份材料只负责一种生命周期，当前事实替换当前事实，历史原因归入历史。',
-    action: '去说明项目',
+    action: '从用途说明开始',
+    buildStep: 0 as BuildStep,
   },
   {
     title: '常见材料分工',
@@ -99,7 +172,8 @@ const learnChapters = [
     example: '当前目标会变，放状态里；长期范围相对稳定，放计划里；已经替换的方案，放历史里。',
     mistake: '常见误区：把当前下一步写进长期计划，几天后计划看起来正式但已经过期。',
     help: '判断材料时先看变化速度。会很快变的是状态，长期有效的是计划，只解释词义的是术语。',
-    action: '去选择材料',
+    action: '去选择内容文档',
+    buildStep: 1 as BuildStep,
   },
   {
     title: '字段怎么判断',
@@ -108,7 +182,8 @@ const learnChapters = [
     example: '“下一原子步骤”不是普通待办，而是恢复后可以立刻执行的唯一动作。',
     mistake: '常见误区：把字段当成填空题，能写多少写多少，最后反而让恢复路径变慢。',
     help: '字段只保留会影响恢复或判断的信息。写入前问一句：未来模型会不会靠它决定下一步？',
-    action: '去填写核心内容',
+    action: '先定义恢复动作',
+    buildStep: 0 as BuildStep,
   },
   {
     title: '冲突时信谁',
@@ -117,7 +192,8 @@ const learnChapters = [
     example: '用户刚要求改目标时，不要被旧状态文档覆盖；旧状态应更新或归档。',
     mistake: '常见误区：把旧历史当成当前命令，导致模型沿着已经废弃的方案继续做。',
     help: '冲突裁决要看来源和新鲜度。历史解释为什么变成现在，但不能覆盖最新目标。',
-    action: '去规定恢复顺序',
+    action: '先选择恢复材料',
+    buildStep: 1 as BuildStep,
   },
   {
     title: '怎么验收和导出',
@@ -126,7 +202,8 @@ const learnChapters = [
     example: '导出不是保存网页，而是生成能复制到项目里的工作流包。',
     mistake: '常见误区：只看页面没有红色错误，就直接导出；但未来模型可能仍不知道如何恢复。',
     help: '验收要模拟真实恢复：假设新模型只拿到导出包，它能不能按入口规则找到状态、历史和下一步。',
-    action: '去演练并导出',
+    action: '从完整搭建流程开始',
+    buildStep: 0 as BuildStep,
   },
 ]
 
@@ -302,6 +379,230 @@ function selectedField(workflow: WorkflowSchema, documentId: string, sectionId?:
     ?.fields.find((field) => field.id === fieldId)
 }
 
+function ModuleFieldEditor({
+  document,
+  section,
+  field,
+  index,
+  total,
+  onDirty,
+}: {
+  document: WorkflowDocument
+  section: WorkflowSection
+  field: WorkflowField
+  index: number
+  total: number
+  onDirty: (location: string) => void
+}) {
+  const updateField = useWorkflowStore((state) => state.updateField)
+  const updateFieldText = useWorkflowStore((state) => state.updateFieldText)
+  const duplicateField = useWorkflowStore((state) => state.duplicateField)
+  const moveField = useWorkflowStore((state) => state.moveField)
+  const removeField = useWorkflowStore((state) => state.removeField)
+  const location = `${document.filename} > ${section.title} > ${field.label}`
+
+  function markAndRun(action: () => void) {
+    action()
+    onDirty(location)
+  }
+
+  return (
+    <article className="module-field-editor">
+      <div className="module-editor-heading">
+        <span className="kicker">字段 {index + 1}</span>
+        <div className="module-icon-actions" aria-label={`${field.label} 字段操作`}>
+          <button type="button" className="icon-button compact-icon" title="上移字段" aria-label={`上移字段 ${field.label}`} disabled={index === 0} onClick={() => markAndRun(() => moveField(document.id, section.id, field.id, -1))}>
+            <ArrowUp size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon" title="下移字段" aria-label={`下移字段 ${field.label}`} disabled={index === total - 1} onClick={() => markAndRun(() => moveField(document.id, section.id, field.id, 1))}>
+            <ArrowDown size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon" title="复制字段" aria-label={`复制字段 ${field.label}`} onClick={() => markAndRun(() => duplicateField(document.id, section.id, field.id))}>
+            <Copy size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon danger" title="删除字段" aria-label={`删除字段 ${field.label}`} onClick={() => {
+            if (confirmDelete(`字段 ${field.label}`)) markAndRun(() => removeField(document.id, section.id, field.id))
+          }}>
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <div className="module-field-form">
+        <label>
+          字段名称
+          <input
+            name={`${field.id}-label`}
+            autoComplete="off"
+            value={field.label}
+            onChange={(event) => markAndRun(() => updateField(document.id, section.id, field.id, { label: event.currentTarget.value }))}
+          />
+          <small>用未来模型一眼能判断用途的名称，例如“下一原子步骤”。</small>
+        </label>
+        <label>
+          常驻说明
+          <textarea
+            name={`${field.id}-guidance`}
+            autoComplete="off"
+            rows={3}
+            value={field.guidance}
+            onChange={(event) => markAndRun(() => updateField(document.id, section.id, field.id, { guidance: event.currentTarget.value }))}
+          />
+          <small>说明应该写什么、何时更新和未来模型如何使用；填写内容后仍会保留。</small>
+        </label>
+        <label className="field-value-editor">
+          当前内容
+          <textarea
+            name={`${field.id}-value`}
+            autoComplete="off"
+            rows={Math.min(8, Math.max(3, fieldValueToText(field.value).split('\n').length + 1))}
+            value={fieldValueToText(field.value)}
+            placeholder="例如：运行测试并记录结果…"
+            onChange={(event) => markAndRun(() => updateFieldText(document.id, section.id, field.id, event.currentTarget.value))}
+          />
+        </label>
+        <div className="field-setting-row">
+          <label>
+            展示方式
+            <select
+              name={`${field.id}-display-format`}
+              value={field.displayFormat ?? 'paragraph'}
+              onChange={(event) => markAndRun(() => updateField(document.id, section.id, field.id, { displayFormat: event.currentTarget.value as WorkflowField['displayFormat'] }))}
+            >
+              {Object.entries(displayFormatLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <small>只改变导出后的阅读形式，不改变字段含义。</small>
+          </label>
+          <label className="check-row module-required-check">
+            <input
+              name={`${field.id}-required`}
+              type="checkbox"
+              checked={field.required && !field.allowEmpty}
+              onChange={(event) => markAndRun(() => updateField(document.id, section.id, field.id, { required: event.currentTarget.checked, allowEmpty: !event.currentTarget.checked }))}
+            />
+            <span>导出前必须填写</span>
+          </label>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function ModuleSectionEditor({
+  document,
+  section,
+  index,
+  total,
+  onDirty,
+}: {
+  document: WorkflowDocument
+  section: WorkflowSection
+  index: number
+  total: number
+  onDirty: (location: string) => void
+}) {
+  const updateSection = useWorkflowStore((state) => state.updateSection)
+  const duplicateSection = useWorkflowStore((state) => state.duplicateSection)
+  const moveSection = useWorkflowStore((state) => state.moveSection)
+  const removeSection = useWorkflowStore((state) => state.removeSection)
+  const addField = useWorkflowStore((state) => state.addField)
+  const addFieldFromModule = useWorkflowStore((state) => state.addFieldFromModule)
+  const availableFields = fieldModuleLibrary.filter((module) => module.targetRoles.includes(document.role))
+  const sectionLocation = `${document.filename} > ${section.title}`
+
+  function markAndRun(action: () => void, location = sectionLocation) {
+    action()
+    onDirty(location)
+  }
+
+  return (
+    <article className="canvas-section-card module-section-editor">
+      <div className="module-editor-heading section-editor-heading">
+        <span className="kicker">章节 {index + 1}</span>
+        <div className="module-icon-actions" aria-label={`${section.title} 章节操作`}>
+          <button type="button" className="icon-button compact-icon" title="上移章节" aria-label={`上移章节 ${section.title}`} disabled={index === 0} onClick={() => markAndRun(() => moveSection(document.id, section.id, -1))}>
+            <ArrowUp size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon" title="下移章节" aria-label={`下移章节 ${section.title}`} disabled={index === total - 1} onClick={() => markAndRun(() => moveSection(document.id, section.id, 1))}>
+            <ArrowDown size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon" title="复制章节" aria-label={`复制章节 ${section.title}`} onClick={() => markAndRun(() => duplicateSection(document.id, section.id))}>
+            <Copy size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button compact-icon danger" title="删除章节" aria-label={`删除章节 ${section.title}`} onClick={() => {
+            const confirmed = document.role === 'protocol'
+              ? window.confirm(`确认删除入口协议模块“${section.title}”？删除核心模块会让协议无法进入预览，直到你补回相应内容。`)
+              : confirmDelete(`章节 ${section.title}`)
+            if (confirmed) markAndRun(() => removeSection(document.id, section.id))
+          }}>
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <div className="section-meta-form">
+        <label>
+          章节名称
+          <input name={`${section.id}-title`} autoComplete="off" value={section.title} onChange={(event) => markAndRun(() => updateSection(document.id, section.id, { title: event.currentTarget.value }))} />
+        </label>
+        <label>
+          这一章负责什么
+          <textarea name={`${section.id}-purpose`} autoComplete="off" rows={2} value={section.purpose} onChange={(event) => markAndRun(() => updateSection(document.id, section.id, { purpose: event.currentTarget.value }))} />
+          <small>只写职责边界，不把当前项目事实塞进这里。</small>
+        </label>
+      </div>
+      <div className="canvas-field-list">
+        {section.fields.map((field, fieldIndex) => (
+          <ModuleFieldEditor
+            key={field.id}
+            document={document}
+            section={section}
+            field={field}
+            index={fieldIndex}
+            total={section.fields.length}
+            onDirty={onDirty}
+          />
+        ))}
+        {section.fields.length === 0 ? <p className="inline-empty">这个章节还没有字段。先添加一个自定义字段，才能写入内容。</p> : null}
+      </div>
+      <div className="field-library-band">
+        <div>
+          <strong>向本章加入字段</strong>
+          <p>预设字段只可加入一次；需要相似字段时，先复制现有字段再改名。</p>
+        </div>
+        <div className="module-button-row">
+          {availableFields.map((module) => {
+            const alreadyPresent = section.fields.some((field) => field.label === module.label && field.guidance === module.guidance)
+            return (
+              <button
+                key={module.id}
+                type="button"
+                className="button button-ghost"
+                disabled={alreadyPresent}
+                title={alreadyPresent ? '本章已经有这个预设字段' : displayFormatLabels[module.displayFormat]}
+                onClick={() => markAndRun(() => addFieldFromModule(document.id, section.id, module.id), `${document.filename} > ${section.title} > ${module.label}`)}
+              >
+                <Plus size={15} aria-hidden="true" />
+                {alreadyPresent ? `${module.label}（已加入）` : module.label}
+              </button>
+            )
+          })}
+          <button type="button" className="button button-secondary" onClick={() => markAndRun(() => addField(document.id, section.id), `${document.filename} > ${section.title} > 新字段`)}>
+            <Plus size={15} aria-hidden="true" />
+            自定义字段
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function DocumentPreview({ filename, content }: { filename?: string; content?: string }) {
+  if (!filename || !content) return <p className="inline-empty">没有可预览的导出内容。</p>
+  if (/\.html?$/i.test(filename)) {
+    return <iframe className="document-preview-frame" title={`${filename} 渲染预览`} sandbox="" srcDoc={content} />
+  }
+  return <pre className="code-preview markdown-preview">{content}</pre>
+}
+
 function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBuild: () => void; onAdvanced: () => void }) {
   return (
     <main className="onboarding-main" id="main-workspace">
@@ -360,7 +661,7 @@ function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBui
   )
 }
 
-function LearnPage({ onBuild }: { onBuild: () => void }) {
+function LearnPage({ onBuild }: { onBuild: (step: BuildStep) => void }) {
   return (
     <main className="onboarding-main learn-main" id="main-workspace">
       <section className="editorial-hero" aria-labelledby="learn-title">
@@ -400,7 +701,7 @@ function LearnPage({ onBuild }: { onBuild: () => void }) {
                 <summary>看不懂这里</summary>
                 <p>{chapter.help}</p>
               </details>
-              <button type="button" className="button button-secondary lesson-action" onClick={onBuild}>
+              <button type="button" className="button button-secondary lesson-action" onClick={() => onBuild(chapter.buildStep)}>
                 {chapter.action}
               </button>
             </div>
@@ -412,7 +713,7 @@ function LearnPage({ onBuild }: { onBuild: () => void }) {
           <h2>读完这些概念后，就可以开始搭建。</h2>
           <p>搭建流程会继续用自然语言提问，并在需要时把你带回对应的入门章节。</p>
         </div>
-        <button type="button" className="button button-primary" onClick={onBuild}>
+        <button type="button" className="button button-primary" onClick={() => onBuild(0)}>
           去工作流搭建
         </button>
       </section>
@@ -420,37 +721,67 @@ function LearnPage({ onBuild }: { onBuild: () => void }) {
   )
 }
 
-function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced: () => void }) {
+function BuildWizard({
+  step,
+  onStepChange,
+  onLearn,
+  onAdvanced,
+}: {
+  step: BuildStep
+  onStepChange: (step: BuildStep) => void
+  onLearn: () => void
+  onAdvanced: () => void
+}) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const createModularProject = useWorkflowStore((state) => state.createModularProject)
   const importProject = useWorkflowStore((state) => state.importProject)
   const addSectionFromModule = useWorkflowStore((state) => state.addSectionFromModule)
-  const addFieldFromModule = useWorkflowStore((state) => state.addFieldFromModule)
-  const updateFieldText = useWorkflowStore((state) => state.updateFieldText)
+  const updateDocument = useWorkflowStore((state) => state.updateDocument)
   const addSection = useWorkflowStore((state) => state.addSection)
-  const duplicateSection = useWorkflowStore((state) => state.duplicateSection)
-  const moveSection = useWorkflowStore((state) => state.moveSection)
-  const removeSection = useWorkflowStore((state) => state.removeSection)
   const refreshProtocolDraft = useWorkflowStore((state) => state.refreshProtocolDraft)
   const setActiveView = useWorkflowStore((state) => state.setActiveView)
-  const [step, setStep] = useState<BuildStep>(0)
-  const [projectName, setProjectName] = useState(workflow.name)
-  const [recoveryRisk, setRecoveryRisk] = useState('目标、下一步和当前阻塞最容易丢失。')
-  const [firstAction, setFirstAction] = useState('读取 STATUS.html，确认下一原子步骤。')
+  const [initialDraft] = useState(() => readBuilderDraft(workflow.name))
+  const [projectName, setProjectName] = useState(initialDraft.projectName)
+  const [recoveryRisk, setRecoveryRisk] = useState(initialDraft.recoveryRisk)
+  const [firstAction, setFirstAction] = useState(initialDraft.firstAction)
   const [selectedContentDocs, setSelectedContentDocs] = useState<Set<ContentDocumentId>>(
-    () => new Set(standardDocumentCards.filter((item) => item.recommended || item.required).map((item) => item.id)),
+    () => new Set(initialDraft.selectedContentDocs),
   )
-  const [selectedCanvasDocumentId, setSelectedCanvasDocumentId] = useState('content-status')
+  const [selectedCanvasDocumentId, setSelectedCanvasDocumentId] = useState(initialDraft.selectedCanvasDocumentId)
+  const [reviewedDocumentIds, setReviewedDocumentIds] = useState<Set<string>>(() => new Set(initialDraft.reviewedDocumentIds))
+  const [protocolNeedsInitialGeneration, setProtocolNeedsInitialGeneration] = useState(initialDraft.protocolNeedsInitialGeneration)
+  const [hasBuilderProject, setHasBuilderProject] = useState(initialDraft.hasBuilderProject)
   const [latestWriteTarget, setLatestWriteTarget] = useState('先选择一份文档。')
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
   const importInputRef = useRef<HTMLInputElement>(null)
+  const stepperRef = useRef<HTMLOListElement>(null)
   const contentDocuments = workflow.documents.filter((document) => document.role !== 'protocol')
   const canvasDocument = contentDocuments.find((document) => document.id === selectedCanvasDocumentId) ?? contentDocuments[0]
   const protocolDocument = workflow.documents.find((document) => document.role === 'protocol')
-  const htmlDocs = useMemo(() => exportHtmlDocuments(workflow), [workflow])
-  const firstPreview = Object.entries(htmlDocs)[0]
+  const validationIssues = useMemo(() => validateWorkflow(workflow), [workflow])
+  const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, 'html'), [workflow])
+  const firstPreview = Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
   const rehearsal = useMemo(() => simulateRecovery(workflow, 'new-session'), [workflow])
+  const currentDocumentErrors = canvasDocument
+    ? validationIssues.filter((issue) => issue.severity === 'error' && issue.target.documentId === canvasDocument.id)
+    : []
+  const protocolErrors = protocolDocument
+    ? validationIssues.filter((issue) => issue.severity === 'error' && issue.target.documentId === protocolDocument.id)
+    : validationIssues.filter((issue) => issue.severity === 'error' && issue.ruleId.includes('protocol'))
+  const blockingErrors = validationIssues.filter((issue) => issue.severity === 'error')
+  const contentStageErrors = validationIssues.filter((issue) => issue.severity === 'error' && (
+    (issue.target.documentId && contentDocuments.some((document) => document.id === issue.target.documentId)) ||
+    (!issue.target.documentId && (
+      issue.ruleId.startsWith('structure-') ||
+      issue.ruleId.startsWith('export-') ||
+      issue.ruleId.startsWith('recovery-next-atomic-step') ||
+      issue.ruleId === 'recovery-realtime-status'
+    ))
+  ))
+  const reviewedDocumentCount = contentDocuments.filter((document) => reviewedDocumentIds.has(document.id)).length
+  const allContentDocumentsReviewed = contentDocuments.length > 0 && contentDocuments.every((document) => reviewedDocumentIds.has(document.id))
+  const contentStageReady = allContentDocumentsReviewed && contentStageErrors.length === 0
 
   function initialWriteTargetFor(document: WorkflowDocument): string {
     const section = document.sections[0]
@@ -462,7 +793,36 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 })
+    const timer = window.setTimeout(() => {
+      const heading = document.querySelector<HTMLElement>('.builder-step h2')
+      heading?.focus({ preventScroll: true })
+      const stepper = stepperRef.current
+      const activeStep = stepper?.querySelector<HTMLElement>('li.active')
+      if (stepper && activeStep) {
+        const centeredLeft = activeStep.offsetLeft - (stepper.clientWidth - activeStep.clientWidth) / 2
+        stepper.scrollTo({ left: Math.max(0, centeredLeft), behavior: 'auto' })
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [step])
+
+  useEffect(() => {
+    const draft: BuilderDraft = {
+      projectName,
+      recoveryRisk,
+      firstAction,
+      selectedContentDocs: [...selectedContentDocs],
+      selectedCanvasDocumentId,
+      reviewedDocumentIds: [...reviewedDocumentIds],
+      protocolNeedsInitialGeneration,
+      hasBuilderProject,
+    }
+    try {
+      window.localStorage.setItem(BUILDER_DRAFT_KEY, JSON.stringify(draft))
+    } catch {
+      // IndexedDB still stores the generated workflow when localStorage is unavailable.
+    }
+  }, [firstAction, hasBuilderProject, projectName, protocolNeedsInitialGeneration, recoveryRisk, reviewedDocumentIds, selectedCanvasDocumentId, selectedContentDocs])
 
   useEffect(() => {
     if (step !== 2 || !canvasDocument) return
@@ -472,7 +832,29 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     })
   }, [canvasDocument, step])
 
+  useEffect(() => {
+    if (contentDocuments[0] && !contentDocuments.some((document) => document.id === selectedCanvasDocumentId)) {
+      setSelectedCanvasDocumentId(contentDocuments[0].id)
+    }
+  }, [contentDocuments, selectedCanvasDocumentId])
+
+  function goToStep(nextStep: BuildStep) {
+    onStepChange(nextStep)
+  }
+
+  function markDocumentDirty(documentId: string, location: string) {
+    setReviewedDocumentIds((current) => {
+      if (!current.has(documentId)) return current
+      const next = new Set(current)
+      next.delete(documentId)
+      return next
+    })
+    setLatestWriteTarget(location)
+    setGeneratedMessage('改动已保存为本地草稿；请完成后重新标记这份文档为已检查。')
+  }
+
   async function createFromDocumentSelection(nextStep: BuildStep = 2) {
+    if (hasBuilderProject && !window.confirm('重新生成文档会替换当前模块画布和入口协议草案。确认放弃现有搭建内容并继续？')) return
     setIsGenerating(true)
     try {
       await createModularProject({
@@ -483,8 +865,11 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
         recoveryRisk,
       })
       setSelectedCanvasDocumentId('content-status')
+      setReviewedDocumentIds(new Set())
+      setProtocolNeedsInitialGeneration(true)
+      setHasBuilderProject(true)
       setGeneratedMessage('已根据所选内容文档生成工作流；入口协议草案已经后置生成，稍后可审查。')
-      setStep(nextStep)
+      goToStep(nextStep)
     } finally {
       setIsGenerating(false)
     }
@@ -495,8 +880,18 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     setIsGenerating(true)
     try {
       await importProject(file)
+      const importedWorkflow = useWorkflowStore.getState().workflow
+      const importedContentDocuments = importedWorkflow.documents.filter((document) => document.role !== 'protocol')
+      const importedIds = importedContentDocuments
+        .map((document) => document.id.replace(/^content-/, ''))
+        .filter((id): id is ContentDocumentId => standardDocumentCards.some((card) => card.id === id))
+      if (importedIds.length > 0) setSelectedContentDocs(new Set(importedIds))
+      setSelectedCanvasDocumentId(importedContentDocuments[0]?.id ?? '')
+      setReviewedDocumentIds(new Set())
+      setProtocolNeedsInitialGeneration(false)
+      setHasBuilderProject(true)
       setGeneratedMessage(`已导入 ${file.name}。你可以在模块画布中检查文档职责，再审查入口协议。`)
-      setStep(2)
+      goToStep(2)
     } catch (error) {
       setGeneratedMessage(error instanceof Error ? error.message : '导入失败，请检查文件格式。')
     } finally {
@@ -519,23 +914,30 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     if (!canvasDocument) return
     const module = sectionModuleLibrary.find((item) => item.id === moduleId)
     addSectionFromModule(canvasDocument.id, moduleId)
-    setLatestWriteTarget(`${canvasDocument.filename} > ${module?.title ?? '新章节'}`)
+    markDocumentDirty(canvasDocument.id, `${canvasDocument.filename} > ${module?.title ?? '新章节'}`)
     setGeneratedMessage('已添加章节模块。你可以继续改标题、字段和值槽。')
   }
 
-  function addFieldModule(sectionId: string, moduleId: string) {
+  function addCustomSection() {
     if (!canvasDocument) return
-    const section = canvasDocument.sections.find((item) => item.id === sectionId)
-    const module = fieldModuleLibrary.find((item) => item.id === moduleId)
-    addFieldFromModule(canvasDocument.id, sectionId, moduleId)
-    setLatestWriteTarget(`${canvasDocument.filename} > ${section?.title ?? '当前章节'} > ${module?.label ?? '新字段'}`)
-    setGeneratedMessage('已添加字段模块。字段说明会常驻可见，具体内容写入当前内容。')
+    addSection(canvasDocument.id)
+    markDocumentDirty(canvasDocument.id, `${canvasDocument.filename} > 新章节`)
+    setGeneratedMessage('已添加自定义章节。请先改清章节名称和职责，再设计字段。')
   }
 
   function reviewProtocolDraft() {
-    refreshProtocolDraft()
-    setGeneratedMessage('入口协议草案已根据当前内容文档重新生成。请审查文档清单、读取顺序、来源优先级、更新规则和完成检查。')
-    setStep(3)
+    if (!contentStageReady) {
+      setGeneratedMessage(contentStageErrors.length > 0 ? '仍有内容文档或文件名错误，请按页面提示修复后再生成协议。' : '请逐份打开内容文档，并点击“标记这份文档已检查”。')
+      return
+    }
+    if (protocolNeedsInitialGeneration) {
+      refreshProtocolDraft()
+      setProtocolNeedsInitialGeneration(false)
+      setGeneratedMessage('入口协议草案已根据最终内容文档生成。请审查文档清单、读取顺序、来源优先级、更新规则和完成检查。')
+    } else {
+      setGeneratedMessage('已保留当前入口协议草案，没有覆盖导入或手工修改。请继续审查各模块。')
+    }
+    goToStep(3)
   }
 
   function addProtocolModule() {
@@ -544,24 +946,12 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
     setGeneratedMessage('已新增协议模块。请补充模块标题、用途和草案内容。')
   }
 
-  function duplicateProtocolModule(sectionId: string) {
-    if (!protocolDocument) return
-    duplicateSection(protocolDocument.id, sectionId)
-    setGeneratedMessage('已复制协议模块。副本会保留原说明和草案内容，请按需要改写。')
-  }
-
-  function moveProtocolModule(sectionId: string, direction: -1 | 1) {
-    if (!protocolDocument) return
-    moveSection(protocolDocument.id, sectionId, direction)
-    setGeneratedMessage('已调整协议模块顺序。')
-  }
-
-  function removeProtocolModule(sectionId: string, title: string) {
-    if (!protocolDocument) return
-    const confirmed = window.confirm(`确认删除入口协议模块「${title}」？删除后未来模型可能少读关键恢复规则。`)
+  function regenerateProtocolDraft() {
+    const confirmed = window.confirm('重新生成会覆盖当前 AGENTS.md 的模块、字段内容和恢复规则。只有确认不再保留手工修改时才继续。是否重新生成？')
     if (!confirmed) return
-    removeSection(protocolDocument.id, sectionId)
-    setGeneratedMessage('已删除协议模块。请确认剩余草案仍覆盖读取顺序、来源优先级、更新规则和完成检查。')
+    refreshProtocolDraft()
+    setProtocolNeedsInitialGeneration(false)
+    setGeneratedMessage('入口协议草案已重新生成；之前的手工协议修改已被替换。')
   }
 
   function openAdvanced(view: AppView) {
@@ -570,20 +960,37 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
   }
 
   const steps = ['确定用途', '选择文档', '模块画布', '协议草案', '结果预览', '演练导出']
+  const purposeReady = projectName.trim().length > 0 && recoveryRisk.trim().length > 0 && firstAction.trim().length > 0
 
   return (
     <main className="onboarding-main build-main" id="main-workspace">
       <section className="build-shell" aria-labelledby="build-title">
-        <div className="build-head">
+        <div className={step === 0 ? 'build-head' : 'build-head build-head-compact'}>
           <span className="kicker">Workflow Builder</span>
-          <h1 id="build-title" aria-label="像搭积木一样设计工作流。"><span className="line-lock">像搭积木一样</span><span className="line-lock">设计工作流。</span></h1>
-          <p>先确定需要哪些内容文档，再逐份文档添加章节、字段、展示格式和常驻说明。入口协议草案由系统后置生成，你最后审查。</p>
+          {step === 0 ? (
+            <>
+              <h1 id="build-title" aria-label="像搭积木一样设计工作流。"><span className="line-lock">像搭积木一样</span><span className="line-lock">设计工作流。</span></h1>
+              <p>先确定需要哪些内容文档，再逐份文档添加章节、字段、展示格式和常驻说明。入口协议草案由系统后置生成，你最后审查。</p>
+            </>
+          ) : (
+            <>
+              <h1 id="build-title">{projectName.trim() || '未命名工作流'}</h1>
+              <p>当前步骤：{steps[step]}。草稿和当前位置会保存在本机。</p>
+            </>
+          )}
         </div>
-        <ol className="stepper" aria-label="搭建步骤">
+        <ol ref={stepperRef} className="stepper" aria-label="搭建步骤">
           {steps.map((label, index) => (
             <li key={label} className={index === step ? 'active' : index < step ? 'done' : ''}>
-              <span>{index + 1}</span>
-              <strong>{label}</strong>
+              <button
+                type="button"
+                aria-current={index === step ? 'step' : undefined}
+                disabled={index > step}
+                onClick={() => goToStep(index as BuildStep)}
+              >
+                <span>{index + 1}</span>
+                <strong>{label}</strong>
+              </button>
             </li>
           ))}
         </ol>
@@ -592,24 +999,27 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
           {step === 0 ? (
             <section className="builder-step" aria-labelledby="start-title">
               <span className="kicker">Step 1</span>
-              <h2 id="start-title">先说清这套工作流要帮谁接手什么。</h2>
+              <h2 id="start-title" tabIndex={-1}>先说清这套工作流要帮谁接手什么。</h2>
               <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
               <div className="question-form">
                 <label>
                   这个工作流服务哪个项目或任务？
-                  <input value={projectName} onChange={(event) => setProjectName(event.currentTarget.value)} />
+                  <input name="builder-project-name" autoComplete="off" value={projectName} onChange={(event) => setProjectName(event.currentTarget.value)} />
+                  {!projectName.trim() ? <small className="field-error">请写一个能识别的项目或任务名称。</small> : null}
                 </label>
                 <label>
                   未来模型恢复时最容易丢失什么信息？
-                  <textarea rows={3} value={recoveryRisk} onChange={(event) => setRecoveryRisk(event.currentTarget.value)} />
+                  <textarea name="builder-recovery-risk" autoComplete="off" rows={3} value={recoveryRisk} onChange={(event) => setRecoveryRisk(event.currentTarget.value)} />
+                  {!recoveryRisk.trim() ? <small className="field-error">请说明至少一种恢复时容易丢失的信息。</small> : null}
                 </label>
                 <label>
                   恢复后希望模型立刻做什么？
-                  <textarea rows={3} value={firstAction} onChange={(event) => setFirstAction(event.currentTarget.value)} />
+                  <textarea name="builder-first-action" autoComplete="off" rows={3} value={firstAction} onChange={(event) => setFirstAction(event.currentTarget.value)} />
+                  {!firstAction.trim() ? <small className="field-error">请写一个恢复后可以立刻执行的动作。</small> : null}
                 </label>
               </div>
               <div className="builder-actions">
-                <button type="button" className="button button-primary" onClick={() => setStep(1)}>
+                <button type="button" className="button button-primary" disabled={!purposeReady} onClick={() => goToStep(1)}>
                   继续选择内容文档
                 </button>
                 <button type="button" className="button button-secondary" onClick={() => importInputRef.current?.click()} disabled={isGenerating}>
@@ -633,13 +1043,13 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
           {step === 1 ? (
             <section className="builder-step" aria-labelledby="materials-title">
               <span className="kicker">Step 2</span>
-              <h2 id="materials-title">先选择需要的内容文档。</h2>
+              <h2 id="materials-title" tabIndex={-1}>先选择需要的内容文档。</h2>
               <p><code>AGENTS.md</code> 不需要你第一步手写。你先选择内容文档，系统会在后面根据这些文档自动生成入口协议草案。</p>
               {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
               <div className="material-grid">
                 {standardDocumentCards.map((item) => (
                   <label key={item.id} className={selectedContentDocs.has(item.id) ? 'material-card document-card selected' : 'material-card document-card'}>
-                    <input type="checkbox" checked={selectedContentDocs.has(item.id)} disabled={item.required} onChange={() => toggleContentDocument(item.id)} />
+                    <input name={`document-${item.id}`} type="checkbox" checked={selectedContentDocs.has(item.id)} disabled={item.required} onChange={() => toggleContentDocument(item.id)} />
                     <strong>{item.filename}{item.required ? <em>必要</em> : null}</strong>
                     <span>{item.description}</span>
                     <small>{item.whenToUse}</small>
@@ -651,7 +1061,7 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                 <p>下一步会生成你选中的内容文档；入口协议草案稍后写入 <code>AGENTS.md</code>，并引用这些文档。</p>
               </section>
               <div className="builder-actions">
-                <button type="button" className="button button-secondary" onClick={() => setStep(0)}>返回用途说明</button>
+                <button type="button" className="button button-secondary" onClick={() => goToStep(0)}><ArrowLeft size={16} aria-hidden="true" />返回用途说明</button>
                 <button type="button" className="button button-primary" onClick={() => void createFromDocumentSelection()} disabled={isGenerating}>
                   生成文档并进入模块画布
                 </button>
@@ -662,9 +1072,19 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
           {step === 2 ? (
             <section className="builder-step module-builder-step" aria-labelledby="content-title">
               <span className="kicker">Step 3</span>
-              <h2 id="content-title">逐份文档搭建模块。</h2>
-              <p>先看这份文档负责什么，再添加章节、字段、展示格式和常驻说明。写入地图会告诉你当前动作最后写到哪里。</p>
-              {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
+              <h2 id="content-title" tabIndex={-1}>逐份文档搭建模块。</h2>
+              <p>先确认文档名称和职责，再编辑章节与字段。每份文档完成后都要标记为已检查，系统才会生成入口协议草案。</p>
+              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              <div className="review-progress" aria-label="内容文档检查进度">
+                <strong>{reviewedDocumentCount}/{contentDocuments.length} 份文档已检查</strong>
+                <span>{contentStageReady ? '可以进入入口协议审查。' : '请逐份确认名称、职责、章节、字段说明和当前内容。'}</span>
+              </div>
+              {contentStageErrors.some((issue) => !issue.target.documentId) ? (
+                <section className="inline-issues" aria-live="polite">
+                  <strong>文档集合还有结构或文件名问题</strong>
+                  {contentStageErrors.filter((issue) => !issue.target.documentId).slice(0, 4).map((issue) => <p key={issue.id}>{issue.title}：{issue.message}</p>)}
+                </section>
+              ) : null}
               <div className="module-workbench">
                 <div className="module-canvas">
                   <nav className="document-module-list" aria-label="内容文档">
@@ -682,6 +1102,9 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                         >
                           <strong>{document.filename}</strong>
                           <span>{document.description}</span>
+                          <small className={reviewedDocumentIds.has(document.id) ? 'document-review-state reviewed' : 'document-review-state'}>
+                            {reviewedDocumentIds.has(document.id) ? '已检查' : '待检查'}
+                          </small>
                         </button>
                       ))}
                     </div>
@@ -690,59 +1113,90 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                     <>
                       <section className="canvas-document-head">
                         <span className="kicker">正在设计</span>
-                        <h3>{canvasDocument.title}</h3>
-                        <p>{canvasDocument.description}</p>
+                        <div className="document-meta-form">
+                          <label>
+                            文档标题
+                            <input name={`${canvasDocument.id}-title`} autoComplete="off" value={canvasDocument.title} onChange={(event) => {
+                              updateDocument(canvasDocument.id, { title: event.currentTarget.value })
+                              markDocumentDirty(canvasDocument.id, `${canvasDocument.filename} > 文档标题`)
+                            }} />
+                            <small>显示给人和模型看的名称，例如“当前状态”。</small>
+                          </label>
+                          <label>
+                            导出文件名
+                            <input name={`${canvasDocument.id}-filename`} autoComplete="off" spellCheck={false} value={canvasDocument.filename} onChange={(event) => {
+                              updateDocument(canvasDocument.id, { filename: event.currentTarget.value })
+                              markDocumentDirty(canvasDocument.id, `${event.currentTarget.value || '未命名文件'} > 文件名`)
+                            }} />
+                            <small>真正写入工作流包的文件名；HTML 内容文档建议使用 .html。</small>
+                          </label>
+                          <label className="document-purpose-field">
+                            这份文档只负责什么
+                            <textarea name={`${canvasDocument.id}-description`} autoComplete="off" rows={3} value={canvasDocument.description} onChange={(event) => {
+                              updateDocument(canvasDocument.id, { description: event.currentTarget.value })
+                              markDocumentDirty(canvasDocument.id, `${canvasDocument.filename} > 文档职责`)
+                            }} />
+                            <small>写清边界，避免同一事实在多份文档重复维护。</small>
+                          </label>
+                        </div>
                       </section>
                       <section className="module-library-strip" aria-label="推荐章节模块">
                         <div>
                           <strong>可加入的章节模块</strong>
-                          <p>模块加入后会展开成普通章节和字段，之后仍可在高级编辑中继续修改。</p>
+                          <p>模块加入后会展开成普通章节和字段，可直接改名、复制、排序或删除。</p>
                         </div>
                         <div className="module-button-row">
                           {sectionModuleLibrary
                             .filter((module) => module.targetRoles.includes(canvasDocument.role))
-                            .map((module) => (
-                              <button key={module.id} type="button" className="button button-secondary" title={displayFormatLabels[module.displayFormat]} onClick={() => addSectionModule(module.id)}>
-                                <Plus size={15} aria-hidden="true" />
-                                {module.title}
-                              </button>
-                            ))}
+                            .map((module) => {
+                              const alreadyPresent = canvasDocument.sections.some((section) => section.id === module.id || section.title === module.title)
+                              return (
+                                <button key={module.id} type="button" className="button button-secondary" disabled={alreadyPresent} title={alreadyPresent ? '这份文档已经有这个预设章节' : displayFormatLabels[module.displayFormat]} onClick={() => addSectionModule(module.id)}>
+                                  <Plus size={15} aria-hidden="true" />
+                                  {alreadyPresent ? `${module.title}（已加入）` : module.title}
+                                </button>
+                              )
+                            })}
+                          <button type="button" className="button button-secondary" onClick={addCustomSection}>
+                            <Plus size={15} aria-hidden="true" />
+                            自定义章节
+                          </button>
                         </div>
                       </section>
                       <div className="canvas-section-list">
-                        {canvasDocument.sections.map((section) => (
-                          <article key={section.id} className="canvas-section-card">
-                            <div className="section-heading compact">
-                              <div>
-                                <h3>{section.title}</h3>
-                                <p>{section.purpose}</p>
-                              </div>
-                            </div>
-                            <div className="canvas-field-list">
-                              {section.fields.map((field) => (
-                                <div key={field.id} className="canvas-field-row">
-                                  <strong>{field.label}</strong>
-                                  <p>{field.guidance}</p>
-                                  <small>当前值：{fieldValueToText(field.value) || '还没有填写'}</small>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="module-button-row">
-                              {fieldModuleLibrary
-                                .filter((module) => module.targetRoles.includes(canvasDocument.role))
-                                .map((module) => (
-                                  <button key={module.id} type="button" className="button button-ghost" title={displayFormatLabels[module.displayFormat]} onClick={() => addFieldModule(section.id, module.id)}>
-                                    <Plus size={15} aria-hidden="true" />
-                                    {module.label}
-                                  </button>
-                                ))}
-                            </div>
-                          </article>
+                        {canvasDocument.sections.map((section, sectionIndex) => (
+                          <ModuleSectionEditor
+                            key={section.id}
+                            document={canvasDocument}
+                            section={section}
+                            index={sectionIndex}
+                            total={canvasDocument.sections.length}
+                            onDirty={(location) => markDocumentDirty(canvasDocument.id, location)}
+                          />
                         ))}
+                        {canvasDocument.sections.length === 0 ? <p className="inline-empty">这份文档还没有章节。请添加一个预设章节或自定义章节。</p> : null}
                       </div>
+                      {currentDocumentErrors.length > 0 ? (
+                        <section className="inline-issues" aria-live="polite">
+                          <strong>这份文档还有 {currentDocumentErrors.length} 个必须修复的问题</strong>
+                          {currentDocumentErrors.slice(0, 4).map((issue) => <p key={issue.id}>{issue.title}：{issue.message}</p>)}
+                        </section>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={reviewedDocumentIds.has(canvasDocument.id) ? 'button button-secondary document-reviewed-button' : 'button button-primary document-reviewed-button'}
+                        disabled={currentDocumentErrors.length > 0}
+                        onClick={() => {
+                          setReviewedDocumentIds((current) => new Set(current).add(canvasDocument.id))
+                          setGeneratedMessage(`${canvasDocument.filename} 已标记为检查完成。后续改动会自动撤销此标记。`)
+                        }}
+                      >
+                        <CheckCircle2 size={16} aria-hidden="true" />
+                        {reviewedDocumentIds.has(canvasDocument.id) ? '这份文档已检查' : '标记这份文档已检查'}
+                      </button>
                     </>
                   ) : (
-                    <EmptyState title="还没有内容文档" detail="请先选择并生成至少一份内容文档。" actionLabel="返回选择文档" onAction={() => setStep(1)} />
+                    <EmptyState title="还没有内容文档" detail="请先选择并生成至少一份内容文档。" actionLabel="返回选择文档" onAction={() => goToStep(1)} />
                   )}
                 </div>
                 <aside className="write-map sticky-map" aria-label="写入地图">
@@ -753,50 +1207,61 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                 </aside>
               </div>
               <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => goToStep(1)}><ArrowLeft size={16} aria-hidden="true" />返回文档选择</button>
                 <button type="button" className="button button-secondary" onClick={() => openAdvanced('documents')}>打开高级文档编辑</button>
-                <button type="button" className="button button-primary" onClick={reviewProtocolDraft}>生成并审查入口协议草案</button>
+                <button type="button" className="button button-primary" disabled={!contentStageReady} onClick={reviewProtocolDraft}>
+                  {protocolNeedsInitialGeneration ? '生成并审查入口协议草案' : '进入入口协议审查'}
+                </button>
               </div>
             </section>
           ) : null}
 
           {step === 3 ? (
-            <section className="builder-step" aria-labelledby="protocol-title">
+            <section className="builder-step protocol-builder-step" aria-labelledby="protocol-title">
               <span className="kicker">Step 4</span>
-              <h2 id="protocol-title">审查系统生成的入口协议草案。</h2>
-              <p><code>AGENTS.md</code> 会串联所有内容文档。你现在审查的是草案，不是第一步手写的协议。</p>
-              {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
+              <h2 id="protocol-title" tabIndex={-1}>审查系统生成的入口协议草案。</h2>
+              <p><code>AGENTS.md</code> 会串联所有内容文档。导入的协议和你的手工修改不会自动被覆盖；只有点击“重新生成草案”并确认后才会替换。</p>
+              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              <div className="protocol-toolbar">
+                <div>
+                  <strong>协议完整性</strong>
+                  <span>{protocolErrors.length > 0 ? `${protocolErrors.length} 个问题必须修复` : '文档清单、读取顺序、来源优先级、更新规则和完成检查均存在。'}</span>
+                </div>
+                <button type="button" className="button button-secondary" onClick={regenerateProtocolDraft}>
+                  <RotateCcw size={16} aria-hidden="true" />
+                  重新生成草案
+                </button>
+              </div>
+              {protocolDocument ? (
+                <section className="canvas-document-head protocol-document-head">
+                  <span className="kicker">AGENTS.md</span>
+                  <div className="document-meta-form">
+                    <label>
+                      协议标题
+                      <input name="protocol-title" autoComplete="off" value={protocolDocument.title} onChange={(event) => updateDocument(protocolDocument.id, { title: event.currentTarget.value })} />
+                    </label>
+                    <label className="document-purpose-field">
+                      协议用途
+                      <textarea name="protocol-description" autoComplete="off" rows={2} value={protocolDocument.description} onChange={(event) => updateDocument(protocolDocument.id, { description: event.currentTarget.value })} />
+                    </label>
+                  </div>
+                </section>
+              ) : null}
               <div className="protocol-review-grid">
                 {protocolDocument?.sections.map((section, index) => (
-                  <article key={section.id} className="protocol-module-card">
-                    <div className="protocol-module-head">
-                      <div>
-                        <span className="kicker">Protocol Module</span>
-                        <h3>{section.title}</h3>
-                        <p>{section.purpose}</p>
-                      </div>
-                      <div className="protocol-module-actions" aria-label={`${section.title} 模块操作`}>
-                        <button type="button" className="button button-ghost" disabled={index === 0} onClick={() => moveProtocolModule(section.id, -1)}>上移</button>
-                        <button type="button" className="button button-ghost" disabled={index === (protocolDocument?.sections.length ?? 0) - 1} onClick={() => moveProtocolModule(section.id, 1)}>下移</button>
-                        <button type="button" className="button button-secondary" onClick={() => duplicateProtocolModule(section.id)}>复制</button>
-                        <button type="button" className="button button-secondary" onClick={() => removeProtocolModule(section.id, section.title)}>删除</button>
-                      </div>
-                    </div>
-                    {section.fields.map((field) => (
-                      <div key={field.id} className="canvas-field-row">
-                        <strong>{field.label}</strong>
-                        <p>{field.guidance}</p>
-                        <label className="protocol-field-edit">
-                          草案内容
-                          <textarea
-                            rows={Math.min(8, Math.max(4, fieldValueToText(field.value).split('\n').length + 1))}
-                            value={fieldValueToText(field.value)}
-                            onChange={(event) => updateFieldText(protocolDocument.id, section.id, field.id, event.currentTarget.value)}
-                          />
-                        </label>
-                      </div>
-                    ))}
-                  </article>
+                  <ModuleSectionEditor
+                    key={section.id}
+                    document={protocolDocument}
+                    section={section}
+                    index={index}
+                    total={protocolDocument.sections.length}
+                    onDirty={(location) => {
+                      setLatestWriteTarget(location)
+                      setGeneratedMessage('协议修改已保存。系统不会自动重生成并覆盖这些内容。')
+                    }}
+                  />
                 ))}
+                {!protocolDocument || protocolDocument.sections.length === 0 ? <p className="inline-empty">入口协议没有可用模块。请新增模块，或确认后重新生成草案。</p> : null}
               </div>
               <button type="button" className="button button-secondary protocol-add-module" onClick={addProtocolModule}>
                 <Plus size={15} aria-hidden="true" />
@@ -804,11 +1269,19 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
               </button>
               <section className="write-map" aria-label="写入地图">
                 <strong>写入地图</strong>
-                <p>这些模块写入 <code>AGENTS.md</code>，未来模型恢复时会先读这里，再根据读取顺序进入其他文档。</p>
+                <p>{latestWriteTarget.startsWith('AGENTS.md') ? latestWriteTarget : 'AGENTS.md > 入口协议模块'}</p>
+                <p>这些模块写入 <code>AGENTS.md</code>，未来模型会先读这里，再根据读取顺序进入其他文档。</p>
               </section>
+              {protocolErrors.length > 0 ? (
+                <section className="inline-issues" aria-live="polite">
+                  <strong>协议还不能进入结果预览</strong>
+                  {protocolErrors.slice(0, 5).map((issue) => <p key={issue.id}>{issue.title}：{issue.message}</p>)}
+                </section>
+              ) : null}
               <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => goToStep(2)}><ArrowLeft size={16} aria-hidden="true" />返回内容文档</button>
                 <button type="button" className="button button-secondary" onClick={() => openAdvanced('documents')}>打开高级编辑</button>
-                <button type="button" className="button button-primary" onClick={() => setStep(4)}>查看结果预览</button>
+                <button type="button" className="button button-primary" disabled={protocolErrors.length > 0} onClick={() => goToStep(4)}>查看结果预览</button>
               </div>
             </section>
           ) : null}
@@ -816,7 +1289,7 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
           {step === 4 ? (
             <section className="builder-step" aria-labelledby="preview-title">
               <span className="kicker">Step 5</span>
-              <h2 id="preview-title">结果预览：文件树、模块分布和恢复路径。</h2>
+              <h2 id="preview-title" tabIndex={-1}>结果预览：文件树、模块分布和恢复路径。</h2>
               <p>这里不做复杂关系画布。初版只展示导出前必须看懂的结果：有哪些文件、入口协议怎么引用它们、恢复演练会怎么读。</p>
               <div className="result-preview-grid">
                 <section className="plain-panel">
@@ -824,9 +1297,10 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                   <ul className="file-list">
                     <li><code>workflow.json</code><span>结构化事实源，可重新导入。</span></li>
                     <li><code>README.md</code><span>说明如何使用导出包。</span></li>
-                    {workflow.documents.map((document) => (
-                      <li key={document.id}><code>documents/{document.filename.replace(/\.md$/i, '.html')}</code><span>{document.sections.length} 个模块章节。</span></li>
-                    ))}
+                    {Object.keys(primaryDocs).map((filename) => {
+                      const source = workflow.documents.find((document) => document.filename === filename || (document.role !== 'protocol' && filename.replace(/\.html$/i, '') === document.filename.replace(/\.(html|md)$/i, '')))
+                      return <li key={filename}><code>documents/{filename}</code><span>{source?.sections.length ?? 0} 个模块章节。</span></li>
+                    })}
                   </ul>
                 </section>
                 <section className="plain-panel">
@@ -834,18 +1308,25 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                   <ol className="read-order-list">
                     {workflow.rules.recoveryOrder.map((stepItem, index) => {
                       const document = workflow.documents.find((item) => item.id === stepItem.documentId)
-                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document?.filename ?? '未知文档'}</strong><small>{stepItem.condition}</small></li>
+                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document ? projectDocumentFilename(document, 'html') : '未知文档'}</strong><small>{stepItem.condition}</small></li>
                     })}
                   </ol>
                 </section>
                 <section className="plain-panel">
-                  <h3>HTML 预览：{firstPreview?.[0] ?? '无文档'}</h3>
-                  <pre className="code-preview">{firstPreview?.[1]?.slice(0, 1400) ?? '没有可预览的导出内容。'}</pre>
+                  <h3>渲染预览：{firstPreview?.[0] ?? '无文档'}</h3>
+                  <DocumentPreview filename={firstPreview?.[0]} content={firstPreview?.[1]} />
                 </section>
               </div>
+              {blockingErrors.length > 0 ? (
+                <section className="inline-issues" aria-live="polite">
+                  <strong>进入最终演练前还要修复 {blockingErrors.length} 个问题</strong>
+                  {blockingErrors.slice(0, 5).map((issue) => <p key={issue.id}>{issue.title}：{issue.message}</p>)}
+                </section>
+              ) : null}
               <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => goToStep(3)}><ArrowLeft size={16} aria-hidden="true" />返回协议审查</button>
                 <button type="button" className="button button-secondary" onClick={() => openAdvanced('export')}>打开完整导出页</button>
-                <button type="button" className="button button-primary" onClick={() => setStep(5)}>进入演练与导出</button>
+                <button type="button" className="button button-primary" disabled={blockingErrors.length > 0} onClick={() => goToStep(5)}>进入演练与导出</button>
               </div>
             </section>
           ) : null}
@@ -853,7 +1334,7 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
           {step === 5 ? (
             <section className="builder-step" aria-labelledby="export-ready-title">
               <span className="kicker">Step 6</span>
-              <h2 id="export-ready-title">最后做一次演练，然后导出。</h2>
+              <h2 id="export-ready-title" tabIndex={-1}>最后做一次演练，然后导出。</h2>
               <p>{rehearsal.status === 'blocked' ? '演练仍有阻塞项，建议先查看恢复演练。' : '恢复演练已经可以推出下一步；导出前再检查一次校验结果。'}</p>
               <div className="finish-grid">
                 <button type="button" className="finish-card" onClick={() => openAdvanced('simulation')}>
@@ -864,6 +1345,9 @@ function BuildWizard({ onLearn, onAdvanced }: { onLearn: () => void; onAdvanced:
                   <strong>生成工作流包</strong>
                   <span>预览 README、workflow.json 和导出文档。</span>
                 </button>
+              </div>
+              <div className="builder-actions">
+                <button type="button" className="button button-secondary" onClick={() => goToStep(4)}><ArrowLeft size={16} aria-hidden="true" />返回结果预览</button>
               </div>
             </section>
           ) : null}
@@ -953,10 +1437,14 @@ function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCoun
         ) : null}
       </div>
       <div className="topbar-status" aria-live="polite">
-        <span className={`save-dot save-dot-${saveStatus}`}></span>
-        <span>{statusLabel(saveStatus)}</span>
-        <span className="muted">{storageMessage}</span>
-        {issueCount > 0 ? <span className="status-pill">{issueCount} 个 Error</span> : <span className="status-pill status-pill-ok">可导出</span>}
+        <span className={`save-dot save-dot-${mode === 'build' ? 'saved' : saveStatus}`}></span>
+        <span>{mode === 'build' ? '本地草稿已保存' : statusLabel(saveStatus)}</span>
+        {mode !== 'build' ? <span className="muted">{storageMessage}</span> : null}
+        {mode === 'build'
+          ? <span className="status-pill">搭建中</span>
+          : issueCount > 0
+            ? <span className="status-pill">{issueCount} 个 Error</span>
+            : <span className="status-pill status-pill-ok">可导出</span>}
       </div>
       {workflow.readOnlyReason ? <p className="topbar-message">{workflow.readOnlyReason}</p> : importMessage ? <p className="topbar-message">{importMessage}</p> : null}
     </header>
@@ -1372,13 +1860,13 @@ function DocumentEditor() {
                               <input value={fieldValueToText(item)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onInput={(event) => updateFieldInstance(document.id, section.id, field.id, index, event.currentTarget.value)} />
                             </label>
                             <div className="inline-actions">
-                              <button type="button" className="icon-button" aria-label="内容上移" disabled={index === 0} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, -1)}>↑</button>
-                              <button type="button" className="icon-button" aria-label="内容下移" disabled={index === fieldInstances(field).length - 1} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, 1)}>↓</button>
+                              <button type="button" className="icon-button" title="内容上移" aria-label="内容上移" disabled={index === 0} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-button" title="内容下移" aria-label="内容下移" disabled={index === fieldInstances(field).length - 1} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
                               <button type="button" className="icon-button" aria-label="复制内容" onClick={(event) => {
                                 const input = event.currentTarget.closest('.repeatable-row')?.querySelector('input')
                                 copyFieldInstance(document.id, section.id, field.id, index, input?.value)
                               }}>
-                                <Plus size={15} aria-hidden="true" />
+                                <Copy size={15} aria-hidden="true" />
                               </button>
                               <button type="button" className="icon-button" aria-label="删除内容" onClick={() => removeFieldInstance(document.id, section.id, field.id, index)}>
                                 <Trash2 size={15} aria-hidden="true" />
@@ -1623,8 +2111,8 @@ function RulesEditor() {
                 </select>
               </label>
               <div className="inline-actions">
-                <button type="button" className="icon-button" aria-label="来源上移" disabled={index === 0} onClick={() => moveSourceRef(index, -1)}>↑</button>
-                <button type="button" className="icon-button" aria-label="来源下移" disabled={index === (sourceRule?.orderedSources.length ?? 0) - 1} onClick={() => moveSourceRef(index, 1)}>↓</button>
+                <button type="button" className="icon-button" title="来源上移" aria-label="来源上移" disabled={index === 0} onClick={() => moveSourceRef(index, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
+                <button type="button" className="icon-button" title="来源下移" aria-label="来源下移" disabled={index === (sourceRule?.orderedSources.length ?? 0) - 1} onClick={() => moveSourceRef(index, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
                 <button type="button" className="icon-button" aria-label="删除来源" onClick={() => {
                   if (confirmDelete('来源')) removeSourceRef(index)
                 }}>
@@ -1817,12 +2305,12 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
   const updateMaintenanceFormat = useWorkflowStore((state) => state.updateMaintenanceFormat)
   const blocking = hasBlockingErrors(issues)
   const blockingIssues = issues.filter((issue) => issue.severity === 'error')
-  const htmlDocs = useMemo(() => exportHtmlDocuments(workflow), [workflow])
-  const markdownDocs = useMemo(() => exportMarkdownDocuments(workflow), [workflow])
   const [message, setMessage] = useState('')
   const [isExporting, setIsExporting] = useState(false)
-  const primaryDocs = workflow.maintenanceFormat === 'html' ? htmlDocs : markdownDocs
-  const firstPreview = Object.entries(primaryDocs)[0]
+  const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, workflow.maintenanceFormat), [workflow])
+  const firstPreview = workflow.maintenanceFormat === 'html'
+    ? Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
+    : Object.entries(primaryDocs)[0]
 
   async function downloadZip() {
     if (blocking) {
@@ -1924,7 +2412,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
 
       <section className="plain-panel">
         <h2>文档预览：{firstPreview?.[0] ?? '无文档'}</h2>
-        <pre className="code-preview">{firstPreview?.[1] ?? '没有可预览的导出内容。'}</pre>
+        <DocumentPreview filename={firstPreview?.[0]} content={firstPreview?.[1]} />
       </section>
     </section>
   )
@@ -2106,8 +2594,9 @@ function MainWorkspace({ issues }: { issues: ValidationIssue[] }) {
 function App() {
   const initialize = useWorkflowStore((state) => state.initialize)
   const workflow = useWorkflowStore((state) => state.workflow)
-  const [mode, setMode] = useState<AppMode>('home')
+  const [route, setRoute] = useState(routeFromHash)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const mode = route.mode
   const issues = useMemo(() => validateWorkflow(workflow), [workflow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
 
@@ -2121,8 +2610,23 @@ function App() {
     window.scrollTo({ top: 0, left: 0 })
   }, [mode])
 
-  function changeMode(nextMode: AppMode) {
-    setMode(nextMode)
+  useEffect(() => {
+    if (!window.location.hash) window.history.replaceState(null, '', routeHash('home', 0))
+    const syncRoute = () => setRoute(routeFromHash())
+    window.addEventListener('hashchange', syncRoute)
+    window.addEventListener('popstate', syncRoute)
+    return () => {
+      window.removeEventListener('hashchange', syncRoute)
+      window.removeEventListener('popstate', syncRoute)
+    }
+  }, [])
+
+  function changeMode(nextMode: AppMode, requestedStep?: BuildStep) {
+    const nextStep = nextMode === 'build' ? requestedStep ?? route.step : route.step
+    const nextRoute = { mode: nextMode, step: nextStep }
+    const nextHash = routeHash(nextMode, nextStep)
+    if (window.location.hash !== nextHash) window.history.pushState(null, '', nextHash)
+    setRoute(nextRoute)
     if (nextMode !== 'advanced') setInspectorOpen(false)
   }
 
@@ -2130,9 +2634,9 @@ function App() {
     <div className={`${workflow.readOnlyReason ? 'app-shell read-only-shell' : 'app-shell'} mode-${mode}${mode === 'advanced' && inspectorOpen ? ' inspector-open' : ''}`}>
       <TopBar issueCount={errorCount} onOpenInspector={() => setInspectorOpen(true)} mode={mode} onModeChange={changeMode} />
       {workflow.readOnlyReason ? <div className="read-only-banner" role="status">{workflow.readOnlyReason}</div> : null}
-      {mode === 'home' ? <HomePage onLearn={() => changeMode('learn')} onBuild={() => changeMode('build')} onAdvanced={() => changeMode('advanced')} /> : null}
-      {mode === 'learn' ? <LearnPage onBuild={() => changeMode('build')} /> : null}
-      {mode === 'build' ? <BuildWizard onLearn={() => changeMode('learn')} onAdvanced={() => changeMode('advanced')} /> : null}
+      {mode === 'home' ? <HomePage onLearn={() => changeMode('learn')} onBuild={() => changeMode('build', 0)} onAdvanced={() => changeMode('advanced')} /> : null}
+      {mode === 'learn' ? <LearnPage onBuild={(step) => changeMode('build', step)} /> : null}
+      {mode === 'build' ? <BuildWizard step={route.step} onStepChange={(step) => changeMode('build', step)} onLearn={() => changeMode('learn')} onAdvanced={() => changeMode('advanced')} /> : null}
       {mode === 'advanced' ? (
         <div className="studio-layout">
           <LeftRail />

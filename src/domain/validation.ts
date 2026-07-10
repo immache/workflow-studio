@@ -7,6 +7,7 @@ import {
   type WorkflowSchema,
 } from './schema'
 import { unsafeDocumentFilenameReason } from './file-safety'
+import { projectedFilenameCollisions } from './export-naming'
 
 function issue(input: Omit<ValidationIssue, 'id'> & { id?: string }): ValidationIssue {
   return {
@@ -87,6 +88,14 @@ const requiredPresetSections: Record<string, string[]> = {
   'MEMORY.html': ['memory-usage-section', 'memory-index', 'timeline', 'memory-rules'],
   'CONTEXT.html': ['context-usage-section', 'entry-fields', 'basic-terms', 'custom-term-template', 'context-boundaries', 'context-maintenance-rules'],
 }
+
+const modularProtocolSectionIds = [
+  'protocol-doc-list',
+  'protocol-read-order',
+  'protocol-source-priority',
+  'protocol-update-rules',
+  'protocol-completion',
+]
 
 const currentStandardPresetDocuments: Record<string, string> = {
   spec: 'SPEC.html',
@@ -199,6 +208,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
       ...document.sections.flatMap((section) => [section.id, ...section.fields.map((field) => field.id)]),
     ]),
   ]
+  const entityIdSet = new Set(entityIds)
   for (const id of duplicateValues(entityIds)) {
     issues.push(
       issue({
@@ -223,6 +233,21 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         ruleId: 'structure-unique-filenames',
       }),
     )
+  }
+
+  const exportFormats = [workflow.maintenanceFormat, workflow.secondaryFormat].filter((format): format is NonNullable<typeof format> => Boolean(format))
+  for (const format of exportFormats) {
+    for (const filename of projectedFilenameCollisions(workflow, format)) {
+      issues.push(
+        issue({
+          severity: 'error',
+          title: '导出文件名冲突',
+          message: `${format === 'html' ? 'HTML' : 'Markdown'} 导出会让多个文档覆盖为 ${filename}。`,
+          target: {},
+          ruleId: `export-${format}-filename-collision`,
+        }),
+      )
+    }
   }
 
   for (const document of workflow.documents) {
@@ -252,7 +277,8 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     )
   }
 
-  if (!workflow.documents.some((document) => document.role === 'protocol')) {
+  const protocolDocuments = workflow.documents.filter((document) => document.role === 'protocol')
+  if (protocolDocuments.length === 0) {
     issues.push(
       issue({
         severity: 'error',
@@ -260,6 +286,16 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         message: '至少需要一个 role 为 protocol 的文档作为恢复入口。',
         target: {},
         ruleId: 'recovery-protocol-entry',
+      }),
+    )
+  } else if (!protocolDocuments.some((document) => workflow.rules.recoveryOrder[0]?.documentId === document.id)) {
+    issues.push(
+      issue({
+        severity: 'error',
+        title: '入口协议不是第一读取项',
+        message: '恢复顺序必须从入口协议开始，否则模型可能跳过总规则。',
+        target: { documentId: protocolDocuments[0].id },
+        ruleId: 'recovery-protocol-first',
       }),
     )
   }
@@ -317,6 +353,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
   }
 
   const documentIds = new Set(workflow.documents.map((document) => document.id))
+  const recoveryStepIds = new Set(workflow.rules.recoveryOrder.map((step) => step.id))
   for (const step of workflow.rules.recoveryOrder) {
     if (!documentIds.has(step.documentId)) {
       issues.push(
@@ -328,6 +365,65 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
           ruleId: 'recovery-valid-references',
         }),
       )
+    }
+    if (step.fallbackStepIds.some((fallbackId) => !recoveryStepIds.has(fallbackId))) {
+      issues.push(
+        issue({
+          severity: 'error',
+          title: '备用恢复步骤引用失效',
+          message: `恢复步骤 ${step.id} 的备用步骤不存在。`,
+          target: { ruleId: step.id },
+          ruleId: 'recovery-valid-fallback-references',
+        }),
+      )
+    }
+  }
+
+  for (const document of workflow.documents) {
+    if (document.readPolicy.dependsOnDocumentIds.some((documentId) => !documentIds.has(documentId))) {
+      issues.push(issue({
+        severity: 'error',
+        title: '文档依赖引用失效',
+        message: `${document.filename} 引用了不存在的依赖文档。`,
+        target: { documentId: document.id },
+        ruleId: 'recovery-valid-document-dependencies',
+      }))
+    }
+  }
+
+  for (const rule of workflow.rules.sourcePriority) {
+    if ((rule.targetId && !entityIdSet.has(rule.targetId)) || rule.orderedSources.some((source) => source.documentId && !documentIds.has(source.documentId))) {
+      issues.push(issue({
+        severity: 'error',
+        title: '来源优先级引用失效',
+        message: `来源规则 ${rule.id} 引用了不存在的文档。`,
+        target: { ruleId: rule.id },
+        ruleId: 'recovery-valid-source-references',
+      }))
+    }
+  }
+
+  for (const trigger of workflow.rules.updateTriggers) {
+    if (!documentIds.has(trigger.targetDocumentId)) {
+      issues.push(issue({
+        severity: 'error',
+        title: '更新规则引用失效',
+        message: `更新规则 ${trigger.id} 指向不存在的文档。`,
+        target: { ruleId: trigger.id },
+        ruleId: 'maintenance-valid-update-references',
+      }))
+    }
+  }
+
+  for (const check of workflow.rules.completionChecks) {
+    if (check.relatedDocumentIds.some((documentId) => !documentIds.has(documentId))) {
+      issues.push(issue({
+        severity: 'error',
+        title: '完成检查引用失效',
+        message: `完成检查 ${check.id} 引用了不存在的文档。`,
+        target: { ruleId: check.id },
+        ruleId: 'completion-valid-document-references',
+      }))
     }
   }
 
@@ -400,7 +496,11 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         }),
       )
     }
-    const expectedSections = isCurrentStandardPresetDocument(document) ? requiredPresetSections[document.filename] : undefined
+    const expectedSections = isCurrentStandardPresetDocument(document)
+      ? requiredPresetSections[document.filename]
+      : document.role === 'protocol' && workflow.documents.some((item) => item.id.startsWith('content-'))
+        ? modularProtocolSectionIds
+        : undefined
     if (expectedSections) {
       const existing = new Set(document.sections.map((section) => section.id))
       const missing = expectedSections.filter((sectionId) => !existing.has(sectionId))
@@ -414,6 +514,21 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
             ruleId: 'structure-preset-required-sections',
           }),
         )
+      }
+      if (document.role === 'protocol') {
+        const emptyCoreSections = expectedSections
+          .map((sectionId) => document.sections.find((section) => section.id === sectionId))
+          .filter((section): section is NonNullable<typeof section> => Boolean(section))
+          .filter((section) => !section.fields.some((field) => fieldValueToText(field.value).trim().length > 0))
+        if (emptyCoreSections.length > 0) {
+          issues.push(issue({
+            severity: 'error',
+            title: '入口协议核心模块没有内容',
+            message: `请为以下模块保留至少一个有内容的字段：${emptyCoreSections.map((section) => section.title).join('、')}。`,
+            target: { documentId: document.id, sectionId: emptyCoreSections[0].id },
+            ruleId: 'structure-protocol-core-content',
+          }))
+        }
       }
     }
     if (document.readPolicy.whenToRead.length === 0) {
@@ -492,6 +607,15 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
       }
       const valueText = fieldValueToText(field.value)
       const validationTarget = fieldValidationTarget(document, section, field.id)
+      if (field.value.kind === 'reference' && !entityIdSet.has(field.value.targetId)) {
+        issues.push(issue({
+          severity: 'error',
+          title: '字段引用失效',
+          message: `${field.label} 指向不存在的对象。`,
+          target: validationTarget,
+          ruleId: 'field-validation-reference-target',
+        }))
+      }
       if (!isFieldEmpty(field) && field.validation.minLength !== undefined && valueText.length < field.validation.minLength) {
         issues.push(
           issue({

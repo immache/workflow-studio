@@ -56,7 +56,8 @@ describe('Workflow Studio modular builder', () => {
     expect(section?.title).toBe('阻塞与确认')
     expect(section?.fields.map((item) => item.label)).toEqual(['阻塞', '需要确认'])
     expect(field?.label).toBe('证据或验证方式')
-    expect(field?.guidance).toContain('展示格式')
+    expect(field?.guidance).toBe('记录命令、文件检查、截图、测试或来源证据。')
+    expect(field?.displayFormat).toBe('checklist')
   })
 
   it('exports modular workflows with README module summaries', async () => {
@@ -72,7 +73,8 @@ describe('Workflow Studio modular builder', () => {
 
     expect(readme).toContain('## 模块摘要')
     expect(readme).toContain('STATUS.html')
-    expect(zip.files['documents/AGENTS.html']).toBeTruthy()
+    expect(zip.files['documents/AGENTS.md']).toBeTruthy()
+    expect(zip.files['documents/AGENTS.html']).toBeUndefined()
     expect(zip.files['documents/STATUS.html']).toContain('data-guidance="true"')
   })
 
@@ -92,5 +94,23 @@ describe('Workflow Studio modular builder', () => {
     expect(text).toContain('MEMORY.html')
     expect(text).not.toContain('USER.html')
     expect(text).not.toContain('CONTEXT.html')
+  })
+
+  it('blocks a modular protocol whose core module has no usable field content', () => {
+    const workflow = createModularWorkflow({
+      name: '协议完整性测试',
+      description: '验证核心协议模块不能成为空壳。',
+      selectedDocumentIds: ['status'],
+      firstAction: '读取状态并继续。',
+      recoveryRisk: '当前状态丢失。',
+    })
+    const protocol = workflow.documents.find((document) => document.role === 'protocol')
+    const readOrder = protocol?.sections.find((section) => section.id === 'protocol-read-order')
+    if (!readOrder) throw new Error('missing protocol read-order fixture')
+    readOrder.fields = []
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'structure-protocol-core-content', severity: 'error' }),
+    ]))
   })
 })

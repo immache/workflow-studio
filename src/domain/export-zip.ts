@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
-import { exportHtmlDocuments } from './export-html'
-import { exportMarkdownDocuments, exportReadme } from './export-markdown'
+import { exportDocumentsForFormat } from './export-documents'
+import { exportReadme } from './export-markdown'
 import type { WorkflowSchema } from './schema'
 import { hasBlockingErrors, validateWorkflow } from './validation'
 
@@ -10,7 +10,10 @@ export type ExportPackage = {
 }
 
 export function packageName(workflow: WorkflowSchema): string {
-  return `${workflow.name.trim().replace(/[^\w\u4e00-\u9fff-]+/g, '-') || 'workflow'}-workflow.zip`
+  const name = workflow.name.trim() || 'workflow'
+  const pattern = workflow.exportSettings.packageNamePattern.trim() || '{name}-workflow'
+  const expanded = pattern.replaceAll('{name}', name).replace(/\.zip$/i, '')
+  return `${expanded.replace(/[^\w\u4e00-\u9fff-]+/g, '-') || 'workflow'}.zip`
 }
 
 export async function createWorkflowZip(workflow: WorkflowSchema): Promise<ExportPackage> {
@@ -22,12 +25,10 @@ export async function createWorkflowZip(workflow: WorkflowSchema): Promise<Expor
   const zip = new JSZip()
   const files: Record<string, string> = {
     'workflow.json': JSON.stringify(workflow, null, 2),
-    'README.md': exportReadme(workflow),
+    'README.md': exportReadme(workflow, workflow.maintenanceFormat),
   }
-  const htmlDocs = exportHtmlDocuments(workflow)
-  const markdownDocs = exportMarkdownDocuments(workflow)
-  const primary = workflow.maintenanceFormat === 'html' ? htmlDocs : markdownDocs
-  const secondary = workflow.secondaryFormat === 'html' ? htmlDocs : workflow.secondaryFormat === 'markdown' ? markdownDocs : {}
+  const primary = exportDocumentsForFormat(workflow, workflow.maintenanceFormat)
+  const secondary = workflow.secondaryFormat ? exportDocumentsForFormat(workflow, workflow.secondaryFormat) : {}
   const secondaryDir = workflow.secondaryFormat === 'html' ? 'documents-html' : 'documents-md'
 
   for (const [name, content] of Object.entries(primary)) {

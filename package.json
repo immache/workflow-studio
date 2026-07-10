@@ -9,8 +9,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:update": "npm run build && playwright test --update-snapshots",
     "screenshots:handoff": "node scripts/capture-handoff-screenshots.mjs",
     "lint": "oxlint",
     "preview": "vite preview"

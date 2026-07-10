@@ -11,9 +11,42 @@ const viewports = [
   { name: 'mobile', viewport: { width: 393, height: 852 }, device: devices['Pixel 7'] },
 ]
 
-async function metrics(page, label) {
-  return page.evaluate((currentLabel) => {
+const states = {
+  home: { selector: '.mode-home .home-hero', hash: '#home' },
+  learn: { selector: '.mode-learn .learn-main', hash: '#learn' },
+  'build-purpose': { selector: '#start-title', hash: '#build/step-1', activeStep: 1 },
+  'document-selection': { selector: '#materials-title', hash: '#build/step-2', activeStep: 2 },
+  'module-canvas': { selector: '.module-builder-step', hash: '#build/step-3', activeStep: 3 },
+  'agents-draft-review': { selector: '.protocol-builder-step', hash: '#build/step-4', activeStep: 4 },
+  'result-preview': {
+    selector: '#preview-title',
+    additionalSelectors: ['iframe.document-preview-frame'],
+    frameSelector: 'iframe.document-preview-frame',
+    frameContentSelector: 'h1',
+    captureSelector: '.result-preview-grid > .plain-panel:last-child',
+    hash: '#build/step-5',
+    activeStep: 5,
+  },
+  export: { selector: '#export-title', hash: '#advanced' },
+}
+
+async function waitForState(page, expected) {
+  await page.locator(expected.selector).waitFor({ state: 'visible' })
+  for (const selector of expected.additionalSelectors ?? []) await page.locator(selector).waitFor({ state: 'visible' })
+  if (expected.frameSelector && expected.frameContentSelector) {
+    await page.frameLocator(expected.frameSelector).locator(expected.frameContentSelector).waitFor({ state: 'visible' })
+  }
+  await page.waitForFunction(({ hash, activeStep }) => {
+    const activeStepNumber = document.querySelector('.stepper li.active span')?.textContent?.trim()
+    return window.location.hash === hash && (activeStep === undefined || activeStepNumber === String(activeStep))
+  }, { hash: expected.hash, activeStep: expected.activeStep })
+  if (expected.activeStep !== undefined) await page.waitForTimeout(450)
+}
+
+async function metrics(page, label, expected) {
+  return page.evaluate(({ currentLabel, currentExpected }) => {
     const root = document.documentElement
+    const body = document.body
     const onboarding = document.querySelector('.onboarding-main')
     const rawTerms = onboarding?.innerText.match(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType|sourcePriority/g) ?? []
     const writeMapVisible = Boolean(document.querySelector('.write-map'))
@@ -25,11 +58,52 @@ async function metrics(page, label) {
     const documentTabColumns = documentTabRow
       ? getComputedStyle(documentTabRow).gridTemplateColumns.split(' ').filter(Boolean).length
       : 0
+    const selectorIsVisible = (selector) => {
+      const element = document.querySelector(selector)
+      const rect = element?.getBoundingClientRect()
+      const style = element ? getComputedStyle(element) : null
+      return Boolean(
+        rect
+        && style
+        && rect.width > 0
+        && rect.height > 0
+        && style.display !== 'none'
+        && style.visibility !== 'hidden',
+      )
+    }
+    const expectedElementVisible = selectorIsVisible(currentExpected.selector)
+    const additionalSelectorsVisible = (currentExpected.additionalSelectors ?? []).every(selectorIsVisible)
+    const activeStep = document.querySelector('.stepper li.active')
+    const activeStepRect = activeStep?.getBoundingClientRect()
+    const stepperRect = activeStep?.closest('.stepper')?.getBoundingClientRect()
+    const activeStepNumber = activeStep?.querySelector('span')?.textContent?.trim() ?? null
+    const activeStepFullyVisible = activeStepRect && stepperRect
+      ? activeStepRect.left >= Math.max(0, stepperRect.left) - 1
+        && activeStepRect.right <= Math.min(window.innerWidth, stepperRect.right) + 1
+        && activeStepRect.top >= Math.max(0, stepperRect.top) - 1
+        && activeStepRect.bottom <= Math.min(window.innerHeight, stepperRect.bottom) + 1
+      : null
+    const expectedStepMatches = currentExpected.activeStep === undefined
+      ? true
+      : activeStepNumber === String(currentExpected.activeStep)
+    const hashMatches = window.location.hash === currentExpected.hash
     return {
       label: currentLabel,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
       scrollY: window.scrollY,
-      horizontalOverflow: Math.max(0, root.scrollWidth - root.clientWidth),
+      horizontalOverflow: Math.max(0, Math.max(root.scrollWidth, body.scrollWidth) - root.clientWidth),
+      expectedSelector: currentExpected.selector,
+      expectedHash: currentExpected.hash,
+      actualHash: window.location.hash,
+      expectedElementVisible,
+      additionalSelectorsVisible,
+      expectedStep: currentExpected.activeStep ?? null,
+      activeStepNumber,
+      activeStepFullyVisible,
+      activeStepRect: activeStepRect
+        ? { left: activeStepRect.left, right: activeStepRect.right, top: activeStepRect.top, bottom: activeStepRect.bottom }
+        : null,
+      pageStateCorrect: expectedElementVisible && additionalSelectorsVisible && hashMatches && expectedStepMatches,
       onboardingRawTerms: [...new Set(rawTerms)],
       homePrimaryEntries: document.querySelectorAll('.home-entry .button').length,
       writeMapVisible,
@@ -37,14 +111,47 @@ async function metrics(page, label) {
       moduleWorkbenchColumns,
       documentTabColumns,
     }
-  }, label)
+  }, { currentLabel: label, currentExpected: expected })
 }
 
 async function capture(page, viewportName, stateName) {
+  const expected = states[stateName]
+  if (!expected) throw new Error(`Unknown screenshot state: ${stateName}`)
+  await waitForState(page, expected)
+  if (expected.frameSelector) {
+    await page.locator(expected.frameSelector).scrollIntoViewIfNeeded()
+    await page.waitForTimeout(150)
+  }
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
+  await page.waitForTimeout(50)
   const file = `${viewportName}-${stateName}.png`
-  await page.screenshot({ path: path.join(outputDir, file), fullPage: true })
-  return metrics(page, `${viewportName}:${stateName}`)
+  if (expected.captureSelector) {
+    await page.locator(expected.captureSelector).screenshot({ path: path.join(outputDir, file) })
+  } else {
+    await page.screenshot({ path: path.join(outputDir, file), fullPage: true })
+  }
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
+  return metrics(page, `${viewportName}:${stateName}`, expected)
+}
+
+async function markEveryContentDocumentReviewed(page) {
+  const documentTabs = page.locator('.document-tab-row .module-doc-card')
+  const documentCount = await documentTabs.count()
+  if (documentCount === 0) throw new Error('Module canvas has no content documents to review.')
+
+  for (let index = 0; index < documentCount; index += 1) {
+    const documentTab = documentTabs.nth(index)
+    await documentTab.click()
+    const reviewButton = page.getByRole('button', { name: '标记这份文档已检查', exact: true })
+    await reviewButton.waitFor({ state: 'visible' })
+    if (!await reviewButton.isEnabled()) throw new Error(`Content document ${index + 1} has blocking validation errors.`)
+    await reviewButton.click()
+    await documentTab.locator('.document-review-state').filter({ hasText: '已检查' }).waitFor({ state: 'visible' })
+  }
+
+  await page.getByLabel('内容文档检查进度').getByText(`${documentCount}/${documentCount} 份文档已检查`).waitFor({ state: 'visible' })
+  const reviewProtocolButton = page.getByRole('button', { name: '生成并审查入口协议草案' })
+  if (!await reviewProtocolButton.isEnabled()) throw new Error('Protocol review remained disabled after every content document was reviewed.')
 }
 
 async function runViewport(browser, config) {
@@ -75,6 +182,7 @@ async function runViewport(browser, config) {
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
   results.push(await capture(page, config.name, 'module-canvas'))
 
+  await markEveryContentDocumentReviewed(page)
   await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
   results.push(await capture(page, config.name, 'agents-draft-review'))
 
@@ -103,6 +211,8 @@ try {
 await writeFile(path.join(outputDir, 'metrics.json'), `${JSON.stringify(allMetrics, null, 2)}\n`, 'utf8')
 const failures = allMetrics.filter((item) =>
   item.horizontalOverflow > 0 ||
+  !item.pageStateCorrect ||
+  (item.expectedStep !== null && item.activeStepFullyVisible !== true) ||
   item.onboardingRawTerms.length > 0 ||
   item.protocolMapVisible ||
   (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.moduleWorkbenchColumns > 2) ||

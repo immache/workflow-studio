@@ -1,4 +1,4 @@
-import { produce } from 'immer'
+import { produce, type Draft } from 'immer'
 import { create } from 'zustand'
 import {
   createCurrentStandardWorkflow,
@@ -86,8 +86,10 @@ type WorkflowStore = {
   removeSection: (documentId: string, sectionId: string) => void
   addField: (documentId: string, sectionId: string) => void
   addFieldFromModule: (documentId: string, sectionId: string, moduleId: string) => void
-  updateField: (documentId: string, sectionId: string, fieldId: string, patch: Partial<Pick<WorkflowField, 'label' | 'type' | 'guidance' | 'lifecycle' | 'required' | 'allowEmpty' | 'defaultValue' | 'repeatable' | 'options' | 'validation'>>) => void
+  updateField: (documentId: string, sectionId: string, fieldId: string, patch: Partial<Pick<WorkflowField, 'label' | 'type' | 'guidance' | 'lifecycle' | 'required' | 'allowEmpty' | 'defaultValue' | 'repeatable' | 'options' | 'validation' | 'displayFormat'>>) => void
   updateFieldText: (documentId: string, sectionId: string, fieldId: string, value: string) => void
+  duplicateField: (documentId: string, sectionId: string, fieldId: string) => void
+  moveField: (documentId: string, sectionId: string, fieldId: string, direction: -1 | 1) => void
   addFieldInstance: (documentId: string, sectionId: string, fieldId: string) => void
   updateFieldInstance: (documentId: string, sectionId: string, fieldId: string, index: number, value: string) => void
   copyFieldInstance: (documentId: string, sectionId: string, fieldId: string, index: number, value?: string) => void
@@ -212,7 +214,7 @@ function newSection(order: number): WorkflowSection {
     lifecycle: 'stable',
     order,
     repeatable: false,
-    fields: [],
+    fields: [newField(1)],
   }
 }
 
@@ -256,6 +258,51 @@ function cloneSection(section: WorkflowSection, order: number): WorkflowSection 
     order,
     fields: section.fields.map(cloneField),
   }
+}
+
+function removeFilenameFromValue(value: FieldValue, filename: string, documentId: string): FieldValue {
+  if (value.kind === 'reference') return value.targetId === documentId ? { kind: 'empty' } : value
+  if (value.kind === 'list') {
+    const items = value.value.map((item) => removeFilenameFromValue(item, filename, documentId)).filter((item) => fieldValueToText(item).trim().length > 0)
+    return { kind: 'list', value: items }
+  }
+  if (value.kind === 'table') {
+    return { ...value, rows: value.rows.filter((row) => !Object.values(row).some((cell) => cell.includes(filename))) }
+  }
+  if (value.kind !== 'scalar' || typeof value.value !== 'string' || !value.value.includes(filename)) return value
+  const text = value.value
+  if (text.includes('\n')) {
+    const remaining = text.split(/\r?\n/).filter((line) => !line.includes(filename)).join('\n').trim()
+    return remaining ? scalarValue(remaining) : { kind: 'empty' }
+  }
+  if (text.includes('->')) {
+    const remaining = text.split(/\s*->\s*/).filter((item) => !item.includes(filename)).join(' -> ').trim()
+    return remaining ? scalarValue(remaining) : { kind: 'empty' }
+  }
+  const remaining = text.replaceAll(filename, '').replace(/\s{2,}/g, ' ').trim()
+  return remaining ? scalarValue(remaining) : { kind: 'empty' }
+}
+
+function removeDocumentReferences(workflow: Draft<WorkflowSchema>, documentId: string, filename: string): void {
+  workflow.rules.recoveryOrder = workflow.rules.recoveryOrder.filter((step) => step.documentId !== documentId)
+  const remainingRecoveryIds = new Set(workflow.rules.recoveryOrder.map((step) => step.id))
+  workflow.rules.recoveryOrder.forEach((step) => {
+    step.fallbackStepIds = step.fallbackStepIds.filter((id) => remainingRecoveryIds.has(id))
+  })
+  workflow.rules.sourcePriority = workflow.rules.sourcePriority
+    .filter((rule) => rule.targetId !== documentId)
+    .map((rule) => ({ ...rule, orderedSources: rule.orderedSources.filter((source) => source.documentId !== documentId).map((source, index) => ({ ...source, priority: index + 1 })) }))
+  workflow.rules.updateTriggers = workflow.rules.updateTriggers.filter((trigger) => trigger.targetDocumentId !== documentId)
+  workflow.rules.completionChecks.forEach((check) => {
+    check.relatedDocumentIds = check.relatedDocumentIds.filter((id) => id !== documentId)
+  })
+  workflow.documents.forEach((document) => {
+    document.readPolicy.dependsOnDocumentIds = document.readPolicy.dependsOnDocumentIds.filter((id) => id !== documentId)
+    document.sections.forEach((section) => section.fields.forEach((field) => {
+      field.value = removeFilenameFromValue(field.value, filename, documentId)
+    }))
+  })
+  workflow.acceptedWarnings = workflow.acceptedWarnings.filter((warning) => warning.target.documentId !== documentId)
 }
 
 function defaultSourcePriority(workflow: WorkflowSchema): SourceRef[] {
@@ -490,8 +537,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
+        const removed = draft.documents.find((document) => document.id === documentId)
+        if (!removed) return
         draft.documents = draft.documents.filter((document) => document.id !== documentId)
-        draft.rules.recoveryOrder = draft.rules.recoveryOrder.filter((step) => step.documentId !== documentId)
+        removeDocumentReferences(draft, documentId, removed.filename)
+        draft.documents.forEach((document, index) => {
+          document.order = index + 1
+          document.readPolicy.readOrderHint = index + 1
+        })
         touch(draft)
       }),
     }))
@@ -634,6 +687,38 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         const field = draft.documents.find((document) => document.id === documentId)?.sections.find((section) => section.id === sectionId)?.fields.find((candidate) => candidate.id === fieldId)
         if (!field) return
         field.value = field.repeatable ? listValueFromText(value) : value.trim().length === 0 ? { kind: 'empty' } : scalarValue(value)
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
+  duplicateField: (documentId, sectionId, fieldId) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
+        if (!section) return
+        const sourceIndex = section.fields.findIndex((field) => field.id === fieldId)
+        if (sourceIndex === -1) return
+        const copy = cloneField(section.fields[sourceIndex])
+        copy.label = `${copy.label} 副本`
+        section.fields.splice(sourceIndex + 1, 0, copy)
+        touch(draft)
+      }),
+    }))
+    void get().saveCurrent()
+  },
+  moveField: (documentId, sectionId, fieldId, direction) => {
+    if (!canEdit(get().workflow)) return
+    set((state) => ({
+      workflow: produce(state.workflow, (draft) => {
+        const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
+        if (!section) return
+        const sourceIndex = section.fields.findIndex((field) => field.id === fieldId)
+        const targetIndex = sourceIndex + direction
+        if (sourceIndex === -1 || targetIndex < 0 || targetIndex >= section.fields.length) return
+        const [field] = section.fields.splice(sourceIndex, 1)
+        section.fields.splice(targetIndex, 0, field)
         touch(draft)
       }),
     }))

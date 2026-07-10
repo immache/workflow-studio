@@ -1,59 +1,58 @@
-import { fieldValueToText, type WorkflowDocument, type WorkflowSchema } from './schema'
+import { projectDocumentNames, rewriteDocumentReferences, type DocumentNameProjection } from './export-naming'
+import { fieldValueToText, type MaintenanceFormat, type WorkflowDocument, type WorkflowField, type WorkflowSchema } from './schema'
 
-function renderDocument(document: WorkflowDocument): string {
-  const lines = [`# ${document.title}`, '', `文件名：\`${document.filename}\``, `角色：\`${document.role}\``, `生命周期：\`${document.lifecycle}\``, '', document.description, '']
+function valueLines(value: string): string[] {
+  return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+}
+
+function markdownTable(value: string): string {
+  const rows = valueLines(value).map((line) => {
+    const cells = line.split(/\s*\|\s*|[：:]\s*/).filter(Boolean)
+    return `| ${cells[0] ?? ''} | ${cells.slice(1).join(' / ')} |`
+  })
+  return ['| 项目 | 内容 |', '| --- | --- |', ...rows].join('\n')
+}
+
+function renderValue(field: WorkflowField, value: string): string {
+  if (!value.trim()) return '未填写'
+  const lines = valueLines(value)
+  if (field.displayFormat === 'checklist') return lines.map((line) => `- [ ] ${line.replace(/^[-*]\s*/, '')}`).join('\n')
+  if (field.displayFormat === 'steps') return lines.map((line, index) => `${index + 1}. ${line.replace(/^\d+[.)、]\s*/, '')}`).join('\n')
+  if (field.displayFormat === 'code') return `\`\`\`text\n${value}\n\`\`\``
+  if (field.displayFormat === 'path-list') return lines.map((line) => `- \`${line}\``).join('\n')
+  if (field.displayFormat === 'key-value' || field.displayFormat === 'decision-table' || field.displayFormat === 'timeline') return markdownTable(value)
+  return value
+}
+
+export function renderMarkdownDocument(document: WorkflowDocument, projection: DocumentNameProjection): string {
+  const outputFilename = projection.byDocumentId.get(document.id) ?? document.filename
+  const lines = [`# ${document.title}`, '', `文件名：\`${outputFilename}\``, `职责：\`${document.role}\``, '', document.description, '']
   for (const section of document.sections) {
     lines.push(`## ${section.title}`, '', `说明：${section.purpose}`, '')
     for (const field of section.fields) {
-      lines.push(`### ${field.label}`, '', `字段 ID：\`${field.id}\``, `生命周期：\`${field.lifecycle}\``, `说明：${field.guidance}`, '', '值：', '', fieldValueToText(field.value) || '未填写', '')
+      const guidance = rewriteDocumentReferences(field.guidance, projection)
+      const value = rewriteDocumentReferences(fieldValueToText(field.value), projection)
+      lines.push(`### ${field.label}`, '', `说明：${guidance}`, '', renderValue(field, value), '')
     }
   }
   return lines.join('\n')
 }
 
 export function exportMarkdownDocuments(workflow: WorkflowSchema): Record<string, string> {
-  return Object.fromEntries(
-    workflow.documents.map((document) => [
-      document.filename.replace(/\.html$/i, '.md'),
-      renderDocument(document),
-    ]),
-  )
+  const projection = projectDocumentNames(workflow, 'markdown')
+  return Object.fromEntries(workflow.documents.map((document) => [projection.byDocumentId.get(document.id)!, renderMarkdownDocument(document, projection)]))
 }
 
-export function exportReadme(workflow: WorkflowSchema): string {
-  const files = workflow.documents.map((document) => `- \`${document.filename}\`：${document.description}`).join('\n')
-  const moduleSummary = workflow.documents
-    .map((document) => {
-      const sections = document.sections.map((section) => `${section.title}（${section.fields.length} 个字段）`).join('；')
-      return `- \`${document.filename}\`：${sections || '暂无章节'}`
-    })
-    .join('\n')
-  const recovery = workflow.rules.recoveryOrder
-    .map((step, index) => {
-      const document = workflow.documents.find((candidate) => candidate.id === step.documentId)
-      return `${index + 1}. ${document?.filename ?? step.documentId} - ${step.condition}`
-    })
-    .join('\n')
-  return [
-    `# ${workflow.name}`,
-    '',
-    workflow.description,
-    '',
-    '## 文件清单',
-    '',
-    files,
-    '',
-    '## 模块摘要',
-    '',
-    moduleSummary,
-    '',
-    '## 推荐读取顺序',
-    '',
-    recovery || '未配置。',
-    '',
-    '## 导入说明',
-    '',
-    '保留 `workflow.json` 作为结构化事实源，可重新导入 Workflow Studio。',
-    '',
-  ].join('\n')
+export function exportReadme(workflow: WorkflowSchema, format: MaintenanceFormat = workflow.maintenanceFormat): string {
+  const projection = projectDocumentNames(workflow, format)
+  const files = workflow.documents.map((document) => `- \`${projection.byDocumentId.get(document.id)}\`：${document.description}`).join('\n')
+  const moduleSummary = workflow.documents.map((document) => {
+    const sections = document.sections.map((section) => `${section.title}（${section.fields.length} 个字段）`).join('；')
+    return `- \`${projection.byDocumentId.get(document.id)}\`：${sections || '暂无章节'}`
+  }).join('\n')
+  const recovery = workflow.rules.recoveryOrder.map((step, index) => {
+    const document = workflow.documents.find((candidate) => candidate.id === step.documentId)
+    return `${index + 1}. ${document ? projection.byDocumentId.get(document.id) : step.documentId} - ${step.condition}`
+  }).join('\n')
+  return [`# ${workflow.name}`, '', workflow.description, '', '## 文件清单', '', files, '', '## 模块摘要', '', moduleSummary, '', '## 推荐读取顺序', '', recovery || '未配置。', '', '## 导入说明', '', '保留 `workflow.json` 作为结构化事实源，可重新导入 Workflow Studio。', ''].join('\n')
 }

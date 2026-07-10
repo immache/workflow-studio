@@ -6,6 +6,7 @@ import {
   scalarValue,
   type CompletionCheck,
   type DocumentRole,
+  type DisplayFormatId,
   type FieldType,
   type InformationLifecycle,
   type RecoveryStep,
@@ -20,16 +21,6 @@ import {
 } from '../../domain/schema'
 
 export type ContentDocumentId = 'spec' | 'status' | 'user' | 'memory' | 'context'
-
-export type DisplayFormatId =
-  | 'paragraph'
-  | 'checklist'
-  | 'steps'
-  | 'key-value'
-  | 'decision-table'
-  | 'timeline'
-  | 'code'
-  | 'path-list'
 
 export type StandardDocumentCard = {
   id: ContentDocumentId
@@ -318,10 +309,11 @@ function field(input: FieldModuleDefinition): WorkflowField {
     id: input.id,
     label: input.label,
     type: input.type,
-    guidance: `${input.guidance} 展示格式：${displayFormatLabels[input.displayFormat]}。`,
+    guidance: input.guidance,
     lifecycle: input.lifecycle,
     required: input.required,
     value: input.value ? scalarValue(input.value) : undefined,
+    displayFormat: input.displayFormat,
   })
 }
 
@@ -543,7 +535,7 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
     .map((source, index) => `${index + 1}. ${source.label}`)
     .join('\n')
   const updateRules = documents
-    .map((documentItem) => `${documentItem.filename}：${documentItem.updatePolicy.updateTriggers.join('；')} 时更新；${documentItem.updatePolicy.replacementMode === 'append-history' ? '追加历史条目' : '替换失效信息'}。`)
+    .map((documentItem) => `${documentItem.filename}：${documentItem.updatePolicy.updateTriggers.join('；')}；${documentItem.updatePolicy.replacementMode === 'append-history' ? '追加历史条目' : '替换失效信息'}。`)
     .join('\n')
   const completionChecks = completionChecksForDocuments(documents).map((check) => `- ${check.label}：${check.description}`).join('\n')
 
