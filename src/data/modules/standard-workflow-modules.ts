@@ -217,8 +217,8 @@ export const sectionModuleLibrary: SectionModuleDefinition[] = [
     userBenefit: '历史只解释为什么，不覆盖当前状态。',
     futureModelUse: '当前材料不足时按关键词理解项目演变。',
     fields: [
-      { id: 'memory-index', label: '记忆索引', guidance: '关键词、日期、条目状态和简短摘要。', type: 'table', lifecycle: 'historical', displayFormat: 'key-value' },
-      { id: 'timeline-entry', label: '演变时间线', guidance: '每条历史都要写状态、事件、原因、当前结果和证据。', type: 'table', lifecycle: 'historical', displayFormat: 'timeline' },
+      { id: 'memory-index', label: '记忆索引', guidance: '记录关键词、日期、状态和简短摘要；状态只能填写“仍有效参考”或“已失效归档”。', type: 'table', lifecycle: 'historical', displayFormat: 'key-value' },
+      { id: 'timeline-entry', label: '演变时间线', guidance: '每条历史都要写状态、事件、原因、当前结果和证据；被替代后改为“已失效归档”，不要删除。', type: 'table', lifecycle: 'historical', displayFormat: 'timeline' },
     ],
   },
   {
@@ -317,6 +317,17 @@ function field(input: FieldModuleDefinition): WorkflowField {
   })
 }
 
+const updateTriggerByRole: Record<DocumentRole, string> = {
+  protocol: '恢复路径、来源优先级、文档职责、更新规则或完成检查变化时',
+  plan: '长期目标、成功标准、范围边界、阶段计划或持久约束变化时',
+  status: '当前目标、已验证事实、阻塞、下一原子步骤或恢复指针变化时',
+  preference: '用户明确表达或反复确认会影响多数未来任务的长期偏好时',
+  history: '出现方向变化、废弃方案、替代关系、重要原因或关键证据时',
+  context: '新增、改名或重新定义术语时',
+  validation: '校验标准、验证方式或完成条件变化时',
+  custom: '这份文档职责范围内的有效事实变化时',
+}
+
 function document(input: {
   id: string
   filename: string
@@ -341,7 +352,7 @@ function document(input: {
       readOrderHint: input.order,
     },
     updatePolicy: {
-      updateTriggers: ['职责范围内事实变化时'],
+      updateTriggers: [updateTriggerByRole[input.role]],
       replacementMode: input.lifecycle === 'historical' ? 'append-history' : 'replace-current',
       staleInfoHandling: input.lifecycle === 'historical' ? 'archive' : 'remove',
     },
@@ -491,7 +502,7 @@ function updateTriggersForDocuments(documents: WorkflowDocument[]): UpdateTrigge
   return documents.map((documentItem) => ({
     id: `trigger-${documentItem.id}`,
     targetDocumentId: documentItem.id,
-    trigger: `${documentItem.title}职责范围内信息变化`,
+    trigger: documentItem.updatePolicy.updateTriggers.join('；'),
     requiredAction: documentItem.lifecycle === 'historical'
       ? `追加或归档 ${documentItem.filename}，不要覆盖当前状态`
       : `更新 ${documentItem.filename}，替换已经失效的信息`,
@@ -538,7 +549,15 @@ export function createRulesForDocuments(documents: WorkflowDocument[]): Workflow
   return {
     recoveryOrder: recoveryOrderForDocuments(documents),
     sourcePriority: [sourcePriority],
-    updateTriggers: updateTriggersForDocuments(documents),
+    updateTriggers: [
+      {
+        id: 'trigger-agents',
+        targetDocumentId: 'agents',
+        trigger: '内容文档集合、读取顺序、来源优先级、维护规则或完成检查变化时',
+        requiredAction: '更新 AGENTS.md 对应协议模块并重新审查入口协议',
+      },
+      ...updateTriggersForDocuments(documents),
+    ],
     completionChecks: completionChecksForDocuments(documents),
     conflictPolicy: {
       defaultAction: 'apply-source-priority',
@@ -570,9 +589,10 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
   const sourcePriority = sourceRefsForDocuments(documents)
     .map((source, index) => `${index + 1}. ${source.label}`)
     .join('\n')
-  const updateRules = documents
-    .map((documentItem) => `${documentItem.filename}：${documentItem.updatePolicy.updateTriggers.join('；')}；${documentItem.updatePolicy.replacementMode === 'append-history' ? '追加历史条目' : '替换失效信息'}。`)
-    .join('\n')
+  const updateRules = [
+    'AGENTS.md：内容文档集合、读取顺序、来源优先级、维护规则或完成检查变化时；更新对应协议模块并重新审查。',
+    ...documents.map((documentItem) => `${documentItem.filename}：${documentItem.updatePolicy.updateTriggers.join('；')}；${documentItem.updatePolicy.replacementMode === 'append-history' ? '追加历史条目并标明替代关系' : '替换失效信息，只保留当前有效内容'}。`),
+  ].join('\n')
   const completionChecks = completionChecksForDocuments(documents).map((check) => `- ${check.label}：${check.description}`).join('\n')
   const recoveryFields = [
     createField({

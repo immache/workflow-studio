@@ -560,6 +560,32 @@ describe('Workflow Studio domain model', () => {
     expect(validateWorkflow(noNextStep).some((issue) => issue.ruleId === 'recovery-next-atomic-step-value' && issue.severity === 'error')).toBe(true)
   })
 
+  it('generates role-specific maintenance guidance for modular workflows', () => {
+    const workflow = createModularWorkflow({
+      name: '维护规则测试',
+      description: '验证生成的长期说明。',
+      selectedDocumentIds: ['spec', 'status', 'memory'],
+      firstAction: '读取 STATUS.html 后执行下一原子步骤。',
+      recoveryRisk: '状态与历史混淆。',
+    })
+    const memory = workflow.documents.find((document) => document.role === 'history')
+    const protocol = workflow.documents.find((document) => document.role === 'protocol')
+    const memoryGuidance = memory?.sections.flatMap((section) => section.fields).map((field) => field.guidance).join('\n') ?? ''
+    const updateRules = protocol?.sections
+      .flatMap((section) => section.fields)
+      .find((field) => field.id === 'protocol-update-rules-field')
+
+    expect(memoryGuidance).toContain('仍有效参考')
+    expect(memoryGuidance).toContain('已失效归档')
+    expect(fieldValueToText(updateRules?.value ?? { kind: 'empty' })).toMatch(/AGENTS\.md：[\s\S]*STATUS\.html：当前目标、已验证事实、阻塞、下一原子步骤或恢复指针变化时/)
+    expect(workflow.rules.updateTriggers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ targetDocumentId: 'agents', trigger: expect.stringContaining('来源优先级') }),
+      expect.objectContaining({ targetDocumentId: 'content-status', trigger: expect.stringContaining('下一原子步骤') }),
+      expect.objectContaining({ targetDocumentId: 'content-memory', requiredAction: expect.stringContaining('追加或归档') }),
+    ]))
+    expect(validateWorkflow(workflow).filter((issue) => issue.ruleId === 'maintenance-update-trigger-coverage')).toHaveLength(0)
+  })
+
   it('requires the protocol document to be first in recovery order', () => {
     const workflow = createCurrentStandardWorkflow()
     const protocolStep = workflow.rules.recoveryOrder.shift()

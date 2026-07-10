@@ -82,6 +82,8 @@ type BuilderDraft = {
   firstAction: string
   selectedContentDocs: ContentDocumentId[]
   selectedCanvasDocumentId: string
+  selectedCanvasSectionId: string
+  selectedProtocolSectionId: string
   reviewedDocumentIds: string[]
   protocolNeedsInitialGeneration: boolean
   hasBuilderProject: boolean
@@ -121,13 +123,18 @@ function builderSimulationFingerprint(workflow: WorkflowSchema): string {
 }
 
 function readBuilderDraft(workflow: WorkflowSchema): BuilderDraft {
+  const fallbackCanvasDocument = workflow.documents.find((document) => document.id === 'content-status')
+    ?? workflow.documents.find((document) => document.role !== 'protocol')
+  const fallbackProtocolDocument = workflow.documents.find((document) => document.role === 'protocol')
   const fallback: BuilderDraft = {
     workflowId: workflow.workflowId,
     projectName: workflow.name,
     recoveryRisk: '目标、下一步和当前阻塞最容易丢失。',
     firstAction: '读取 STATUS.html，确认下一原子步骤。',
     selectedContentDocs: standardDocumentCards.filter((item) => item.recommended || item.required).map((item) => item.id),
-    selectedCanvasDocumentId: 'content-status',
+    selectedCanvasDocumentId: fallbackCanvasDocument?.id ?? '',
+    selectedCanvasSectionId: fallbackCanvasDocument?.sections[0]?.id ?? '',
+    selectedProtocolSectionId: fallbackProtocolDocument?.sections[0]?.id ?? '',
     reviewedDocumentIds: [],
     protocolNeedsInitialGeneration: false,
     hasBuilderProject: false,
@@ -143,13 +150,22 @@ function readBuilderDraft(workflow: WorkflowSchema): BuilderDraft {
     const selectedContentDocs = Array.isArray(parsed.selectedContentDocs)
       ? parsed.selectedContentDocs.filter((id): id is ContentDocumentId => allowedIds.has(id as ContentDocumentId))
       : fallback.selectedContentDocs
+    const canvasDocument = workflow.documents.find((document) => (
+      document.role !== 'protocol' && document.id === parsed.selectedCanvasDocumentId
+    )) ?? fallbackCanvasDocument
+    const canvasSection = canvasDocument?.sections.find((section) => section.id === parsed.selectedCanvasSectionId)
+      ?? canvasDocument?.sections[0]
+    const protocolSection = fallbackProtocolDocument?.sections.find((section) => section.id === parsed.selectedProtocolSectionId)
+      ?? fallbackProtocolDocument?.sections[0]
     return {
       workflowId: workflow.workflowId,
       projectName: typeof parsed.projectName === 'string' ? parsed.projectName : fallback.projectName,
       recoveryRisk: typeof parsed.recoveryRisk === 'string' ? parsed.recoveryRisk : fallback.recoveryRisk,
       firstAction: typeof parsed.firstAction === 'string' ? parsed.firstAction : fallback.firstAction,
       selectedContentDocs,
-      selectedCanvasDocumentId: typeof parsed.selectedCanvasDocumentId === 'string' ? parsed.selectedCanvasDocumentId : fallback.selectedCanvasDocumentId,
+      selectedCanvasDocumentId: canvasDocument?.id ?? fallback.selectedCanvasDocumentId,
+      selectedCanvasSectionId: canvasSection?.id ?? fallback.selectedCanvasSectionId,
+      selectedProtocolSectionId: protocolSection?.id ?? fallback.selectedProtocolSectionId,
       reviewedDocumentIds: Array.isArray(parsed.reviewedDocumentIds)
         ? parsed.reviewedDocumentIds.filter((id): id is string => typeof id === 'string')
         : [],
@@ -398,6 +414,18 @@ function fieldInstances(field: WorkflowField) {
   return text.trim().length === 0 ? [] : [field.value]
 }
 
+function fieldValuePlaceholder(field: WorkflowField, document: WorkflowDocument): string {
+  const name = field.label.trim() || '这个字段'
+  if (document.role === 'protocol') return `填写“${name}”的协议内容…`
+  if (field.displayFormat === 'checklist') return `逐条填写“${name}”，每行一项…`
+  if (field.displayFormat === 'steps') return `填写“${name}”的可执行步骤…`
+  if (field.displayFormat === 'decision-table') return `填写“${name}”的场景、依据和处理方式…`
+  if (field.displayFormat === 'timeline') return `填写“${name}”的时间、事件和当前结果…`
+  if (field.displayFormat === 'code') return `填写“${name}”需要保留的命令或代码…`
+  if (field.displayFormat === 'path-list') return `逐条填写“${name}”的路径…`
+  return `填写“${name}”的当前内容…`
+}
+
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -520,7 +548,7 @@ function ModuleFieldEditor({
               ? Math.min(18, Math.max(10, fieldText.split('\n').length + Math.ceil(fieldText.length / 36)))
               : Math.min(8, Math.max(3, fieldText.split('\n').length + 1))}
             value={fieldText}
-            placeholder="例如：运行测试并记录结果…"
+            placeholder={fieldValuePlaceholder(field, document)}
             aria-invalid={valueMissing}
             aria-describedby={valueMissing ? `${field.id}-value-error` : undefined}
             onChange={(event) => markAndRun(() => updateFieldText(document.id, section.id, field.id, event.currentTarget.value))}
@@ -856,8 +884,8 @@ function BuildWizard({
     () => new Set(initialDraft.selectedContentDocs),
   )
   const [selectedCanvasDocumentId, setSelectedCanvasDocumentId] = useState(initialDraft.selectedCanvasDocumentId)
-  const [selectedCanvasSectionId, setSelectedCanvasSectionId] = useState('')
-  const [selectedProtocolSectionId, setSelectedProtocolSectionId] = useState('')
+  const [selectedCanvasSectionId, setSelectedCanvasSectionId] = useState(initialDraft.selectedCanvasSectionId)
+  const [selectedProtocolSectionId, setSelectedProtocolSectionId] = useState(initialDraft.selectedProtocolSectionId)
   const [reviewedDocumentIds, setReviewedDocumentIds] = useState<Set<string>>(() => new Set(initialDraft.reviewedDocumentIds))
   const [protocolNeedsInitialGeneration, setProtocolNeedsInitialGeneration] = useState(initialDraft.protocolNeedsInitialGeneration)
   const [hasBuilderProject, setHasBuilderProject] = useState(initialDraft.hasBuilderProject)
@@ -967,6 +995,8 @@ function BuildWizard({
     setFirstAction(nextDraft.firstAction)
     setSelectedContentDocs(new Set(nextDraft.selectedContentDocs))
     setSelectedCanvasDocumentId(nextDraft.selectedCanvasDocumentId)
+    setSelectedCanvasSectionId(nextDraft.selectedCanvasSectionId)
+    setSelectedProtocolSectionId(nextDraft.selectedProtocolSectionId)
     setReviewedDocumentIds(new Set(nextDraft.reviewedDocumentIds))
     setProtocolNeedsInitialGeneration(nextDraft.protocolNeedsInitialGeneration)
     setHasBuilderProject(nextDraft.hasBuilderProject)
@@ -991,6 +1021,8 @@ function BuildWizard({
       firstAction,
       selectedContentDocs: [...selectedContentDocs],
       selectedCanvasDocumentId,
+      selectedCanvasSectionId,
+      selectedProtocolSectionId,
       reviewedDocumentIds: [...reviewedDocumentIds],
       protocolNeedsInitialGeneration,
       hasBuilderProject,
@@ -1002,7 +1034,7 @@ function BuildWizard({
     } catch {
       // IndexedDB still stores the generated workflow when localStorage is unavailable.
     }
-  }, [firstAction, hasBuilderProject, projectName, protocolBaseline, protocolNeedsInitialGeneration, recoveryRisk, reviewedDocumentIds, rulesBaseline, selectedCanvasDocumentId, selectedContentDocs, workflow.workflowId])
+  }, [firstAction, hasBuilderProject, projectName, protocolBaseline, protocolNeedsInitialGeneration, recoveryRisk, reviewedDocumentIds, rulesBaseline, selectedCanvasDocumentId, selectedCanvasSectionId, selectedContentDocs, selectedProtocolSectionId, workflow.workflowId])
 
   useEffect(() => {
     if (step !== 2 || !canvasDocument) return
@@ -1013,16 +1045,18 @@ function BuildWizard({
   }, [canvasDocument, step])
 
   useEffect(() => {
-    if (!canvasDocument) {
+    const selectedDocument = contentDocuments.find((document) => document.id === selectedCanvasDocumentId)
+    if (contentDocuments.length === 0) {
       setSelectedCanvasSectionId('')
       return
     }
+    if (!selectedDocument) return
     setSelectedCanvasSectionId((current) => (
-      canvasDocument.sections.some((section) => section.id === current)
+      selectedDocument.sections.some((section) => section.id === current)
         ? current
-        : canvasDocument.sections[0]?.id ?? ''
+        : selectedDocument.sections[0]?.id ?? ''
     ))
-  }, [canvasDocument])
+  }, [selectedCanvasDocumentId, workflow.documents])
 
   useEffect(() => {
     if (!protocolDocument) {
@@ -1037,10 +1071,12 @@ function BuildWizard({
   }, [protocolDocument])
 
   useEffect(() => {
-    if (contentDocuments[0] && !contentDocuments.some((document) => document.id === selectedCanvasDocumentId)) {
-      setSelectedCanvasDocumentId(contentDocuments[0].id)
-    }
-  }, [contentDocuments, selectedCanvasDocumentId])
+    setSelectedCanvasDocumentId((current) => (
+      contentDocuments.some((document) => document.id === current)
+        ? current
+        : contentDocuments[0]?.id ?? ''
+    ))
+  }, [workflow.documents])
 
   function goToStep(nextStep: BuildStep) {
     onStepChange(nextStep)
@@ -1097,7 +1133,11 @@ function BuildWizard({
       })
       const createdWorkflow = useWorkflowStore.getState().workflow
       draftWorkflowIdRef.current = createdWorkflow.workflowId
-      setSelectedCanvasDocumentId(createdWorkflow.documents.find((document) => document.role !== 'protocol')?.id ?? '')
+      const firstContentDocument = createdWorkflow.documents.find((document) => document.role !== 'protocol')
+      const createdProtocol = createdWorkflow.documents.find((document) => document.role === 'protocol')
+      setSelectedCanvasDocumentId(firstContentDocument?.id ?? '')
+      setSelectedCanvasSectionId(firstContentDocument?.sections[0]?.id ?? '')
+      setSelectedProtocolSectionId(createdProtocol?.sections[0]?.id ?? '')
       setReviewedDocumentIds(new Set())
       setProtocolNeedsInitialGeneration(true)
       setHasBuilderProject(true)
@@ -1123,6 +1163,8 @@ function BuildWizard({
         .filter((id): id is ContentDocumentId => standardDocumentCards.some((card) => card.id === id))
       setSelectedContentDocs(new Set(importedIds))
       setSelectedCanvasDocumentId(importedContentDocuments[0]?.id ?? '')
+      setSelectedCanvasSectionId(importedContentDocuments[0]?.sections[0]?.id ?? '')
+      setSelectedProtocolSectionId(importedWorkflow.documents.find((document) => document.role === 'protocol')?.sections[0]?.id ?? '')
       setReviewedDocumentIds(new Set())
       setProtocolNeedsInitialGeneration(false)
       setHasBuilderProject(true)

@@ -321,6 +321,8 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   const firstField = firstSection.locator('.module-field-editor').first()
   await firstField.getByLabel('字段名称').fill('本轮交付目标')
   await firstField.getByLabel('常驻说明').fill('只保留当前仍有效且可验证的交付目标。')
+  await expect(firstField.getByLabel('当前内容')).toHaveAttribute('placeholder', '填写“本轮交付目标”的当前内容…')
+  await expect(firstField.getByLabel('当前内容')).not.toHaveAttribute('placeholder', /运行测试并记录结果/)
   await firstField.getByLabel('当前内容').fill('完成浏览器回归与交付截图验收。')
   await firstField.getByLabel('展示方式').selectOption('key-value')
   await expect(firstField.getByLabel('展示方式')).toHaveValue('key-value')
@@ -473,6 +475,30 @@ test('persists the builder draft and selected documents across a refresh', async
   await expect(page.getByLabel('这个工作流服务哪个项目或任务？')).toHaveValue('刷新后继续的工作流')
   await expect(page.getByLabel('未来模型恢复时最容易丢失什么信息？')).toHaveValue('当前目标、输入材料位置和用户最近确认的边界。')
   await expect(page.getByLabel('恢复后希望模型立刻做什么？')).toHaveValue('先读取 STATUS.html，再检查下一原子步骤。')
+})
+
+test('restores the exact builder document and section after a refresh', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  await selectBuilderDocument(page, 'STATUS.html')
+  const targetSection = page.locator('.module-builder-step .section-switch').filter({ hasText: '阻塞与确认' })
+  await targetSection.click()
+  await expect(targetSection).toHaveClass(/active/)
+
+  await expect.poll(() => page.evaluate(() => {
+    return Object.keys(window.localStorage)
+      .filter((item) => item.startsWith('workflow-studio.builder-draft.v2.'))
+      .map((key) => JSON.parse(window.localStorage.getItem(key) ?? '{}') as {
+        selectedCanvasDocumentId?: string
+        selectedCanvasSectionId?: string
+      })
+      .some((draft) => draft.selectedCanvasDocumentId === 'content-status' && draft.selectedCanvasSectionId === 'status-blockers')
+  })).toBe(true)
+
+  await page.reload()
+  await expect(page).toHaveURL(/#build\/step-3$/)
+  await expect(page.locator('.canvas-document-head code')).toHaveText('STATUS.html')
+  await expect(page.locator('.module-builder-step .section-switch.active')).toContainText('阻塞与确认')
+  await expect(page.locator('.module-section-editor').getByLabel('章节名称')).toHaveValue('阻塞与确认')
 })
 
 test('keeps the wizard step in the URL and follows browser history', async ({ page }) => {
