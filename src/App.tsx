@@ -494,7 +494,9 @@ function ModuleFieldEditor({
           <textarea
             name={`${field.id}-value`}
             autoComplete="off"
-            rows={Math.min(8, Math.max(3, fieldValueToText(field.value).split('\n').length + 1))}
+            rows={document.role === 'protocol'
+              ? Math.min(18, Math.max(10, fieldText.split('\n').length + Math.ceil(fieldText.length / 36)))
+              : Math.min(8, Math.max(3, fieldText.split('\n').length + 1))}
             value={fieldText}
             placeholder="例如：运行测试并记录结果…"
             aria-invalid={valueMissing}
@@ -648,9 +650,35 @@ function ModuleSectionEditor({
 function DocumentPreview({ filename, content }: { filename?: string; content?: string }) {
   if (!filename || !content) return <p className="inline-empty">没有可预览的导出内容。</p>
   if (/\.html?$/i.test(filename)) {
-    return <iframe className="document-preview-frame" title={`${filename} 渲染预览`} sandbox="" srcDoc={content} />
+    return (
+      <div className="document-preview-shell">
+        <iframe className="document-preview-frame" title={`${filename} 渲染预览`} sandbox="" srcDoc={content} />
+        <span className="preview-continuation"><ArrowDown size={15} aria-hidden="true" />预览窗口内还有后续内容</span>
+      </div>
+    )
   }
   return <pre className="code-preview markdown-preview" tabIndex={0} aria-label={`${filename} 文本预览`}>{content}</pre>
+}
+
+function SemanticCopy({ text }: { text: string }) {
+  return text.split(/(入口协议草案|请审查|第一步|信什么|项目使命|目标、范围与成功标准)/g).map((part, index) => (
+    /^(入口协议草案|请审查|第一步|信什么|项目使命|目标、范围与成功标准)$/.test(part)
+      ? <span className="semantic-unit" key={`${part}-${index}`}>{part}</span>
+      : part
+  ))
+}
+
+function WriteLocationPath({ value }: { value: string }) {
+  return (
+    <span className="write-location-path">
+      {value.split(' > ').map((part, index) => (
+        <span className="write-location-segment" key={`${part}-${index}`}>
+          {index > 0 ? <span aria-hidden="true">›</span> : null}
+          <span>{part}</span>
+        </span>
+      ))}
+    </span>
+  )
 }
 
 function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBuild: () => void; onAdvanced: () => void }) {
@@ -660,7 +688,7 @@ function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBui
         <div className="home-copy">
           <span className="kicker">Workflow Studio</span>
           <h1 id="home-title">为未来<span className="semantic-unit">接手项目</span>的模型，留下一套清楚的<span className="semantic-unit">工作流</span>。</h1>
-          <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。你会先选内容文档，再像搭积木一样设计每份文档。</p>
+          <p>工作流的目的，是让模型知道始终该读什么、<span className="semantic-unit">信什么</span>、接着做什么。你会先选内容文档，再像搭积木一样设计每份文档。</p>
         </div>
         <div className="home-proof" aria-label="本地工作方式">
           <span>本地保存</span>
@@ -717,14 +745,14 @@ function LearnPage({ onBuild }: { onBuild: (step: BuildStep) => void }) {
       <section className="editorial-hero" aria-labelledby="learn-title">
         <span className="kicker">Workflow Primer</span>
         <h1 id="learn-title">先弄懂工作流，再开始填内容。</h1>
-        <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。</p>
+        <p>工作流的目的，是让模型知道始终该读什么、<span className="semantic-unit">信什么</span>、接着做什么。</p>
         <p>下面这些章节解释搭建时最容易卡住的概念，你不需要记住底层字段名。</p>
       </section>
       <section className="primer-map" aria-label="模块化搭建方法">
         <article>
           <span className="kicker">01</span>
           <h2>先选内容文档</h2>
-          <p>从稳定计划、状态快照、用户偏好、历史演变和术语解释中选择需要的文档。入口协议不要求你第一步手写。</p>
+          <p>从稳定计划、状态快照、用户偏好、历史演变和术语解释中选择需要的文档。入口协议不要求你<span className="semantic-unit">第一步</span>手写。</p>
         </article>
         <article>
           <span className="kicker">02</span>
@@ -733,7 +761,7 @@ function LearnPage({ onBuild }: { onBuild: (step: BuildStep) => void }) {
         </article>
         <article>
           <span className="kicker">03</span>
-          <h2>最后审查协议草案</h2>
+          <h2><span className="semantic-unit">最后审查</span><span className="semantic-unit">协议草案</span></h2>
           <p>系统根据内容文档自动生成 AGENTS.md 草案，你只需要检查它是否正确串联了读取顺序和更新规则。</p>
         </article>
       </section>
@@ -806,11 +834,17 @@ function BuildWizard({
   const [rulesBaseline, setRulesBaseline] = useState(initialDraft.rulesBaselineFingerprint)
   const [latestWriteTarget, setLatestWriteTarget] = useState('先选择一份文档。')
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isBuilderExporting, setIsBuilderExporting] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
+  const [previewFilename, setPreviewFilename] = useState('')
+  const [builderScenario, setBuilderScenario] = useState<SimulationScenario>('new-session')
+  const [builderResultScenario, setBuilderResultScenario] = useState<SimulationScenario>('new-session')
+  const [hasRunBuilderSimulation, setHasRunBuilderSimulation] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const stepperRef = useRef<HTMLOListElement>(null)
   const canvasEditorStartRef = useRef<HTMLElement>(null)
   const protocolEditorStartRef = useRef<HTMLElement>(null)
+  const builderSimulationResultRef = useRef<HTMLElement>(null)
   const focusFirstActionOnStepRef = useRef(false)
   const draftWorkflowIdRef = useRef(initialDraft.workflowId)
   const skipDraftSaveRef = useRef(false)
@@ -821,8 +855,11 @@ function BuildWizard({
   const protocolSection = protocolDocument?.sections.find((section) => section.id === selectedProtocolSectionId) ?? protocolDocument?.sections[0]
   const validationIssues = useMemo(() => validateWorkflow(workflow), [workflow])
   const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, 'html'), [workflow])
-  const firstPreview = Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
-  const rehearsal = useMemo(() => simulateRecovery(workflow, 'new-session'), [workflow])
+  const defaultPreview = Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
+  const selectedPreview = previewFilename && primaryDocs[previewFilename]
+    ? [previewFilename, primaryDocs[previewFilename]] as const
+    : defaultPreview
+  const rehearsal = useMemo(() => simulateRecovery(workflow, builderResultScenario), [builderResultScenario, workflow])
   const currentDocumentErrors = canvasDocument
     ? validationIssues.filter((issue) => issue.severity === 'error' && issue.target.documentId === canvasDocument.id)
     : []
@@ -843,6 +880,9 @@ function BuildWizard({
   const allContentDocumentsReviewed = contentDocuments.length > 0 && contentDocuments.every((document) => reviewedDocumentIds.has(document.id))
   const contentStageReady = allContentDocumentsReviewed && contentStageErrors.length === 0
   const canvasDocumentIndex = canvasDocument ? contentDocuments.findIndex((document) => document.id === canvasDocument.id) : -1
+  const canvasRecoveryStep = canvasDocument
+    ? workflow.rules.recoveryOrder.find((recoveryStep) => recoveryStep.documentId === canvasDocument.id)
+    : undefined
   const nextUnreviewedDocument = canvasDocumentIndex >= 0
     ? [...contentDocuments.slice(canvasDocumentIndex + 1), ...contentDocuments.slice(0, canvasDocumentIndex)]
       .find((document) => !reviewedDocumentIds.has(document.id))
@@ -1141,6 +1181,32 @@ function BuildWizard({
       : '已重新生成你确认覆盖的部分，另一部分继续保留手工内容。')
   }
 
+  function runBuilderSimulation() {
+    setBuilderResultScenario(builderScenario)
+    setHasRunBuilderSimulation(true)
+    window.setTimeout(() => {
+      builderSimulationResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      builderSimulationResultRef.current?.focus({ preventScroll: true })
+    }, 0)
+  }
+
+  async function downloadBuilderPackage() {
+    if (blockingErrors.length > 0) {
+      setGeneratedMessage('仍有阻塞问题，修复后才能下载工作流包。')
+      return
+    }
+    setIsBuilderExporting(true)
+    try {
+      const pkg = await createWorkflowZip(workflow)
+      downloadBlob(pkg.blob, packageName(workflow))
+      setGeneratedMessage(`工作流包已下载，包含 ${Object.keys(pkg.files).length} 个文件。`)
+    } catch (error) {
+      setGeneratedMessage(error instanceof Error ? error.message : '工作流包生成失败。')
+    } finally {
+      setIsBuilderExporting(false)
+    }
+  }
+
   function openAdvanced(view: AppView) {
     onAdvanced(view)
   }
@@ -1201,7 +1267,7 @@ function BuildWizard({
               <span className="kicker">Step 1</span>
               <h2 id="start-title" tabIndex={-1}>先说清这套工作流要帮谁接手什么。</h2>
               <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
-              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="question-form">
                 <label>
                   这个工作流服务哪个项目或任务？
@@ -1253,7 +1319,7 @@ function BuildWizard({
               <span className="kicker">Step 2</span>
               <h2 id="materials-title" tabIndex={-1}>先选择需要的内容文档。</h2>
               <p><code>AGENTS.md</code> 不需要你第一步手写。你先选择内容文档，系统会在后面根据这些文档自动生成入口协议草案。</p>
-              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="material-grid">
                 {standardDocumentCards.map((item) => (
                   <label key={item.id} className={selectedContentDocs.has(item.id) ? 'material-card document-card selected' : 'material-card document-card'}>
@@ -1310,7 +1376,7 @@ function BuildWizard({
               <span className="kicker">Step 3</span>
               <h2 id="content-title" tabIndex={-1}>逐份文档搭建模块。</h2>
               <p>先确认文档名称和职责，再编辑章节与字段。每份文档完成后都要标记为已检查，系统才会生成入口协议草案。</p>
-              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="review-progress" aria-label="内容文档检查进度">
                 <strong>{reviewedDocumentCount}/{contentDocuments.length} 份文档已检查</strong>
                 <span>{contentStageReady ? '可以进入入口协议审查。' : '请逐份确认名称、职责、章节、字段说明和当前内容。'}</span>
@@ -1390,6 +1456,20 @@ function BuildWizard({
                             <small>写清边界，避免同一事实在多份文档重复维护。</small>
                           </label>
                         </div>
+                        <dl className="document-identity-facts" aria-label="文档读取身份">
+                          <div>
+                            <dt>信息多久会变</dt>
+                            <dd>{lifecycleCopy[canvasDocument.lifecycle].label}：{lifecycleCopy[canvasDocument.lifecycle].detail}</dd>
+                          </div>
+                          <div>
+                            <dt>由谁引用</dt>
+                            <dd>{protocolDocument?.filename ?? '入口协议'} 负责串联；读取条件为“{canvasRecoveryStep?.condition || '尚未加入恢复顺序'}”。</dd>
+                          </div>
+                          <div>
+                            <dt>恢复时怎么读</dt>
+                            <dd>{canvasRecoveryStep?.required ? '每次恢复必读' : canvasRecoveryStep ? '条件匹配时按需读取' : '尚未进入恢复路径'}</dd>
+                          </div>
+                        </dl>
                       </section>
                       <section className="module-library-strip" aria-label="推荐章节模块">
                         <div>
@@ -1476,7 +1556,7 @@ function BuildWizard({
                 </div>
                 <aside className="write-map sticky-map" aria-label="写入地图">
                   <strong>写入地图</strong>
-                  <p>{latestWriteTarget}</p>
+                  <p><WriteLocationPath value={latestWriteTarget} /></p>
                   <p>{canvasDocument ? `当前操作位于 ${canvasDocument.filename}。章节模块会成为文档章节，字段模块会成为常驻说明和值槽。` : '先选择一份文档。'}</p>
                   <p>未来模型会按入口协议先找到这份文档，再根据章节和字段说明恢复判断。</p>
                 </aside>
@@ -1496,7 +1576,7 @@ function BuildWizard({
               <span className="kicker">Step 4</span>
               <h2 id="protocol-title" tabIndex={-1}>审查系统生成的入口协议草案。</h2>
               <p><code>AGENTS.md</code> 会串联所有内容文档。导入的协议和你的手工修改不会自动被覆盖；只有点击“重新生成草案”并确认后才会替换。</p>
-              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
+              {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="protocol-toolbar">
                 <div>
                   <strong>协议完整性</strong>
@@ -1617,7 +1697,15 @@ function BuildWizard({
                     <li><code>README.md</code><span>说明如何使用导出包。</span></li>
                     {Object.keys(primaryDocs).map((filename) => {
                       const source = workflow.documents.find((document) => document.filename === filename || (document.role !== 'protocol' && filename.replace(/\.html$/i, '') === document.filename.replace(/\.(html|md)$/i, '')))
-                      return <li key={filename}><code>documents/{filename}</code><span>{source?.title || '未命名文档'} · {source?.sections.length ?? 0} 个模块章节。</span></li>
+                      const fieldCount = source?.sections.reduce((total, section) => total + section.fields.length, 0) ?? 0
+                      const sectionNames = source?.sections.map((section) => section.title).filter(Boolean) ?? []
+                      return (
+                        <li key={filename}>
+                          <code>documents/{filename}</code>
+                          <span>{source?.title || '未命名文档'} · {sectionNames.length} 个章节、{fieldCount} 个字段</span>
+                          {sectionNames.length > 0 ? <small>章节：{sectionNames.join('、')}</small> : <small>暂未添加章节</small>}
+                        </li>
+                      )
                     })}
                   </ul>
                 </section>
@@ -1630,9 +1718,24 @@ function BuildWizard({
                     })}
                   </ol>
                 </section>
-                <section className="plain-panel">
-                  <h3>渲染预览：{firstPreview?.[0] ?? '无文档'}</h3>
-                  <DocumentPreview filename={firstPreview?.[0]} content={firstPreview?.[1]} />
+                <section className="plain-panel document-preview-panel">
+                  <div className="preview-panel-heading">
+                    <div>
+                      <h3>渲染预览</h3>
+                      <p>切换文件，逐份确认章节、字段说明和当前内容在导出后是否清楚。</p>
+                    </div>
+                    <label>
+                      预览文档
+                      <select
+                        name="builder-preview-document"
+                        value={selectedPreview?.[0] ?? ''}
+                        onChange={(event) => setPreviewFilename(event.currentTarget.value)}
+                      >
+                        {Object.keys(primaryDocs).map((filename) => <option key={filename} value={filename}>{filename}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <DocumentPreview filename={selectedPreview?.[0]} content={selectedPreview?.[1]} />
                 </section>
               </div>
               {blockingErrors.length > 0 ? (
@@ -1653,21 +1756,84 @@ function BuildWizard({
             <section className="builder-step" aria-labelledby="export-ready-title">
               <span className="kicker">Step 6</span>
               <h2 id="export-ready-title" tabIndex={-1}><span className="semantic-unit">先运行恢复演练，</span><span className="semantic-unit">再导出工作流包。</span></h2>
-              <p>{rehearsal.status === 'blocked' ? '演练仍有阻塞项，建议先查看恢复演练。' : '恢复演练已经可以推出下一步；导出前再检查一次校验结果。'}</p>
+              <p>选择一种真实情境，确认未来模型能找到该读的文档和下一步。演练通过后，可以直接在这里下载工作流包。</p>
               <section className="write-map" aria-label="写入地图">
                 <strong>演练与导出</strong>
                 <p>本步不再改写文档。恢复演练会按入口协议读取所需文档；导出会生成 <code>workflow.json</code>、<code>README.md</code>、内容文档和 ZIP 工作流包。</p>
               </section>
-              <div className="finish-grid">
-                <button type="button" className="finish-card" onClick={() => openAdvanced('simulation')}>
-                  <strong>运行恢复演练</strong>
-                  <span>模拟新会话、上下文压缩和目标冲突。</span>
-                </button>
-                <button type="button" className="finish-card" onClick={() => openAdvanced('export')}>
-                  <strong>生成工作流包</strong>
-                  <span>预览 README、workflow.json 和导出文档。</span>
-                </button>
-              </div>
+              <section className="builder-simulation-panel" aria-labelledby="builder-simulation-title">
+                <div>
+                  <span className="kicker">Rehearsal</span>
+                  <h3 id="builder-simulation-title">1. 先验证恢复路径</h3>
+                  <p>新手建议先演练“新会话”。其他情境用于检查压缩、冲突或资料缺失时的处理方式。</p>
+                </div>
+                <div className="builder-simulation-controls">
+                  <label>
+                    演练情境
+                    <select
+                      name="builder-simulation-scenario"
+                      value={builderScenario}
+                      onChange={(event) => {
+                        setBuilderScenario(event.currentTarget.value as SimulationScenario)
+                        setHasRunBuilderSimulation(false)
+                        setGeneratedMessage('')
+                      }}
+                    >
+                      {scenarioOptions.map((scenario) => <option key={scenario} value={scenario}>{scenarioLabels[scenario]}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" className="button button-primary" onClick={runBuilderSimulation}>
+                    <Play size={16} aria-hidden="true" />
+                    演练“{scenarioLabels[builderScenario]}”
+                  </button>
+                </div>
+                {hasRunBuilderSimulation ? (
+                  <section
+                    ref={builderSimulationResultRef}
+                    className={`builder-simulation-result simulation-${rehearsal.status} editor-scroll-target`}
+                    tabIndex={-1}
+                    aria-live="polite"
+                    aria-labelledby="builder-simulation-result-title"
+                  >
+                    <div className="simulation-result-heading">
+                      <div>
+                        <span className="result-status">{rehearsal.status === 'pass' ? '通过' : rehearsal.status === 'risky' ? '需留意' : '被阻塞'}</span>
+                        <h4 id="builder-simulation-result-title">“{scenarioLabels[rehearsal.scenario]}”演练结果</h4>
+                      </div>
+                      <span>{rehearsal.readDocuments.length} 份文档被实际读取</span>
+                    </div>
+                    <p><strong>下一步：</strong>{rehearsal.nextAtomicStep || '当前情境还不能推出明确的下一步。'}</p>
+                    {rehearsal.readDocuments.length > 0 ? <p><strong>已读取：</strong>{rehearsal.readDocuments.join(' → ')}</p> : null}
+                    {rehearsal.blockers.length > 0 ? (
+                      <div className="simulation-blockers">
+                        <strong>需要先修复</strong>
+                        <ul>{rehearsal.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+                      </div>
+                    ) : <p>入口协议、所需文档和下一步已经形成可执行路径。</p>}
+                  </section>
+                ) : <p className="inline-empty">尚未演练。选择情境后点击上方按钮，结果会直接显示在这里。</p>}
+              </section>
+              <section className="builder-export-panel" aria-labelledby="builder-export-title">
+                <div>
+                  <span className="kicker">Package</span>
+                  <h3 id="builder-export-title">2. 下载可以继续编辑的工作流包</h3>
+                  <p>ZIP 中同时保留可重新导入的结构化数据和给未来模型阅读的文档。</p>
+                </div>
+                {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
+                <div className="builder-actions">
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={!hasRunBuilderSimulation || rehearsal.status === 'blocked' || blockingErrors.length > 0 || isBuilderExporting}
+                    onClick={() => void downloadBuilderPackage()}
+                  >
+                    <Download size={16} aria-hidden="true" />
+                    {isBuilderExporting ? '正在生成工作流包…' : '下载工作流包'}
+                  </button>
+                  <button type="button" className="button button-secondary" onClick={() => openAdvanced('export')}>查看完整导出详情</button>
+                </div>
+                {!hasRunBuilderSimulation ? <small>先完成一次恢复演练，下载按钮才会启用。</small> : rehearsal.status === 'blocked' ? <small>当前演练被阻塞，请返回修改对应文档或协议。</small> : null}
+              </section>
               <div className="builder-actions">
                 <button type="button" className="button button-secondary" onClick={() => goToStep(4)}><ArrowLeft size={16} aria-hidden="true" />返回结果预览</button>
               </div>
@@ -2608,7 +2774,16 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
   const scenario = useWorkflowStore((state) => state.simulationScenario)
   const setScenario = useWorkflowStore((state) => state.setSimulationScenario)
   const [resultScenario, setResultScenario] = useState<SimulationScenario>(scenario)
+  const simulationResultRef = useRef<HTMLElement>(null)
   const result = useMemo(() => simulateRecovery(workflow, resultScenario), [workflow, resultScenario])
+
+  function runSimulation() {
+    setResultScenario(scenario)
+    window.setTimeout(() => {
+      simulationResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      simulationResultRef.current?.focus({ preventScroll: true })
+    }, 0)
+  }
 
   return (
     <section className="workspace-section" aria-labelledby="simulation-title">
@@ -2622,35 +2797,43 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
           <select name="simulation-scenario" value={scenario} onChange={(event) => setScenario(event.currentTarget.value as SimulationScenario)} aria-label="选择模拟情境">
             {scenarioOptions.map((item) => <option key={item} value={item}>{scenarioLabels[item]}</option>)}
           </select>
-          <button type="button" className="button button-primary" onClick={() => setResultScenario(scenario)}>
+          <button type="button" className="button button-primary" onClick={runSimulation}>
             <Play size={16} aria-hidden="true" />
-            演练新会话恢复
+            演练“{scenarioLabels[scenario]}”
           </button>
         </div>
       </div>
 
-      <div className="split-panel">
+      <section
+        ref={simulationResultRef}
+        className={`plain-panel simulation-status simulation-${result.status} editor-scroll-target`}
+        tabIndex={-1}
+        aria-live="polite"
+      >
+        <h2>{scenarioLabels[result.scenario]}演练结果</h2>
+        <p>{result.nextAtomicStep ? `下一步建议：${result.nextAtomicStep}` : '本次演练没有发现新的下一步。'}</p>
+        <p>实际读取：{result.readDocuments.length > 0 ? result.readDocuments.join(' → ') : '没有文档被读取'}</p>
+        {result.blockers.length > 0 ? (
+          <ul className="blocker-list">
+            {result.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+          </ul>
+        ) : null}
+        {result.conflicts.length > 0 ? (
+          <div className="conflict-list">
+            {result.conflicts.map((conflict) => (
+              <article key={conflict.id}>
+                <strong>{conflict.description}</strong>
+                <p>冲突时信谁：{conflict.selectedSource?.label ?? '需要人工确认'}。{conflict.reason}</p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <details className="relationship-details">
+        <summary>查看关系图与恢复路径</summary>
         <RelationshipGraph workflow={workflow} issues={issues} activeDocumentIds={result.readDocuments} />
-        <section className={`plain-panel simulation-status simulation-${result.status}`}>
-          <h2>{scenarioLabels[result.scenario]}</h2>
-          <p>{result.nextAtomicStep ? `下一步建议：${result.nextAtomicStep}` : '本次演练没有发现新的下一步。'}</p>
-          {result.blockers.length > 0 ? (
-            <ul className="blocker-list">
-              {result.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
-            </ul>
-          ) : null}
-          {result.conflicts.length > 0 ? (
-            <div className="conflict-list">
-              {result.conflicts.map((conflict) => (
-                <article key={conflict.id}>
-                  <strong>{conflict.description}</strong>
-                  <p>冲突时信谁：{conflict.selectedSource?.label ?? '需要人工确认'}。{conflict.reason}</p>
-                </article>
-              ))}
-            </div>
-          ) : null}
-        </section>
-      </div>
+      </details>
 
       <ol className="timeline" aria-label="模拟步骤">
         {result.steps.map((step) => (
@@ -2800,7 +2983,7 @@ function InspectorPanel({ issues, onClose, returnFocus }: { issues: ValidationIs
   const selectFieldAction = useWorkflowStore((state) => state.selectField)
   const acceptWarning = useWorkflowStore((state) => state.acceptWarning)
   const [showSuggestions, setShowSuggestions] = useState(true)
-  const panelRef = useRef<HTMLElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
@@ -2856,7 +3039,7 @@ function InspectorPanel({ issues, onClose, returnFocus }: { issues: ValidationIs
   }
 
   return (
-    <aside ref={panelRef} className="right-panel" role="dialog" aria-modal="true" aria-labelledby="inspector-title">
+    <div ref={panelRef} className="right-panel" role="dialog" aria-modal="true" aria-labelledby="inspector-title">
       <div className="inspector-top">
         <div>
           <span className="kicker">Inspector</span>
@@ -2915,7 +3098,7 @@ function InspectorPanel({ issues, onClose, returnFocus }: { issues: ValidationIs
           ))}
         </div>
       </section>
-    </aside>
+    </div>
   )
 }
 
