@@ -192,6 +192,45 @@ test('reports overview import failures and restores inspector focus on Escape', 
   await expect(inspectorTrigger).toBeFocused()
 })
 
+test('respects reduced motion for programmatic result scrolling', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addInitScript(() => {
+    const behaviors: string[] = []
+    const original = Element.prototype.scrollIntoView
+    Object.defineProperty(window, '__workflowScrollBehaviors', { value: behaviors })
+    Element.prototype.scrollIntoView = function scrollIntoView(options?: boolean | ScrollIntoViewOptions) {
+      if (typeof options === 'object') behaviors.push(options.behavior ?? 'auto')
+      return original.call(this, options)
+    }
+  })
+  await page.goto('/#advanced/simulation')
+  await page.getByRole('button', { name: /演练“/ }).click()
+  await expect(page.locator('.simulation-status')).toBeFocused()
+
+  const behaviors = await page.evaluate(() => (
+    window as unknown as { __workflowScrollBehaviors: string[] }
+  ).__workflowScrollBehaviors)
+  expect(behaviors).toContain('auto')
+  expect(behaviors).not.toContain('smooth')
+})
+
+test('keeps a focused editor control above the fixed mobile navigation', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile fixed-navigation regression')
+  await page.goto('/#advanced/documents')
+  const target = page.getByLabel('当前内容').last()
+  await target.evaluate((element) => {
+    element.scrollIntoView({ block: 'nearest' })
+    element.focus()
+  })
+  await expect(target).toBeFocused()
+  await expect.poll(async () => page.evaluate(() => {
+    const focused = document.activeElement?.getBoundingClientRect()
+    const navigation = document.querySelector('.left-rail')?.getBoundingClientRect()
+    if (!focused || !navigation) return false
+    return focused.top >= 0 && focused.bottom <= navigation.top - 8
+  })).toBe(true)
+})
+
 test('disables every downgrade export for higher-version read-only imports', async ({ page }) => {
   await page.goto('/#advanced/overview')
   await page.getByLabel('从总览导入工作流 JSON 或 ZIP').setInputFiles({
@@ -327,6 +366,9 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await expect(htmlPreview).toHaveAttribute('title', 'SPEC.html 渲染预览')
   await expect(htmlPreview).toHaveAttribute('sandbox', '')
   await expect(page.frameLocator('iframe.document-preview-frame').getByRole('heading', { level: 1, name: '稳定计划' })).toBeVisible()
+  await htmlPreview.focus()
+  await expect(htmlPreview).toBeFocused()
+  await expect.poll(() => htmlPreview.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe('none')
   await page.getByLabel('预览文档').selectOption('CONTEXT.html')
   await expect(htmlPreview).toHaveAttribute('title', 'CONTEXT.html 渲染预览')
   await expect(page.frameLocator('iframe.document-preview-frame').getByRole('heading', { level: 1, name: '术语解释' })).toBeVisible()
@@ -644,15 +686,21 @@ test('supports advanced field validation, hidden suggestions, and delete confirm
   await advancedValidationSummary.click()
   await page.getByLabel('最小长度').first().fill('10')
   await page.getByRole('button', { name: '检查', exact: true }).click()
-  await expect(page.getByText('字段长度不足')).toBeVisible()
-  await page.getByRole('button', { name: '关闭检查器' }).click()
+  await expect(page.getByText('字段长度不足', { exact: true })).toBeVisible()
+  const invalidValue = page.getByLabel('当前内容').first()
+  await expect(invalidValue).toHaveAttribute('aria-invalid', 'true')
+  await expect(invalidValue).toHaveAttribute('aria-describedby', /field-errors-/)
+  const inspector = page.getByRole('dialog', { name: '检查与修复' })
+  await inspector.locator('.issue').filter({ hasText: '字段长度不足' }).getByRole('button', { name: '去修复' }).click()
+  await expect(inspector).toHaveCount(0)
+  await expect(invalidValue).toBeFocused()
 
   await page.getByLabel('最小长度').first().fill('')
   await page.getByLabel('高级校验').first().fill('error | valid-email | 必须是邮箱')
   await page.getByText('高级校验与底层值').nth(1).click()
   await page.getByLabel('高级校验').nth(1).fill('warning | non-empty | 第二个字段不能为空')
   await page.getByRole('button', { name: '检查', exact: true }).click()
-  await expect(page.getByText('自定义校验未通过')).toBeVisible()
+  await expect(page.getByText('自定义校验未通过', { exact: true })).toBeVisible()
   await expect(page.getByText('ID 重复')).toHaveCount(0)
   await page.getByRole('button', { name: '关闭检查器' }).click()
   await page.getByLabel('高级校验').first().fill('')

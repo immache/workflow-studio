@@ -96,6 +96,14 @@ type BuilderSimulationRecord = {
 
 const BUILDER_DRAFT_KEY_PREFIX = 'workflow-studio.builder-draft.v2'
 
+function preferredScrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+}
+
+function fieldErrorDescriptionId(fieldId: string): string {
+  return `field-errors-${encodeURIComponent(fieldId || 'field')}`
+}
+
 function protocolFingerprint(workflow: WorkflowSchema): string {
   return JSON.stringify(workflow.documents.find((document) => document.role === 'protocol') ?? null)
 }
@@ -662,11 +670,20 @@ function ModuleSectionEditor({
 }
 
 function DocumentPreview({ filename, content }: { filename?: string; content?: string }) {
+  const [previewFocused, setPreviewFocused] = useState(false)
   if (!filename || !content) return <p className="inline-empty">没有可预览的导出内容。</p>
   if (/\.html?$/i.test(filename)) {
     return (
       <div className="document-preview-shell">
-        <iframe className="document-preview-frame" title={`${filename} 渲染预览`} sandbox="" srcDoc={content} />
+        <iframe
+          className={previewFocused ? 'document-preview-frame preview-focused' : 'document-preview-frame'}
+          title={`${filename} 渲染预览`}
+          sandbox=""
+          srcDoc={content}
+          tabIndex={0}
+          onFocus={() => setPreviewFocused(true)}
+          onBlur={() => setPreviewFocused(false)}
+        />
         <span className="preview-continuation"><ArrowDown size={15} aria-hidden="true" />预览窗口内还有后续内容</span>
       </div>
     )
@@ -923,7 +940,7 @@ function BuildWizard({
     const timer = window.setTimeout(() => {
       if (step === 0 && focusFirstActionOnStepRef.current) {
         const field = document.getElementById('builder-first-action')
-        field?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        field?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'center' })
         field?.focus({ preventScroll: true })
         focusFirstActionOnStepRef.current = false
       } else {
@@ -1031,7 +1048,7 @@ function BuildWizard({
 
   function scrollToEditor(target: HTMLElement | null) {
     window.setTimeout(() => {
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       target?.querySelector<HTMLElement>('h3')?.focus({ preventScroll: true })
     }, 0)
   }
@@ -1212,7 +1229,7 @@ function BuildWizard({
     })
     setBuilderExportMessage('')
     window.setTimeout(() => {
-      builderSimulationResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      builderSimulationResultRef.current?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       builderSimulationResultRef.current?.focus({ preventScroll: true })
     }, 0)
   }
@@ -2255,7 +2272,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   )
 }
 
-function DocumentEditor() {
+function DocumentEditor({ issues }: { issues: ValidationIssue[] }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const selectedDocumentId = useWorkflowStore((state) => state.selectedDocumentId)
   const selectDocument = useWorkflowStore((state) => state.selectDocument)
@@ -2278,6 +2295,12 @@ function DocumentEditor() {
   const removeField = useWorkflowStore((state) => state.removeField)
   const document = selectedDocument(workflow, selectedDocumentId)
   const documentIndex = document ? workflow.documents.findIndex((item) => item.id === document.id) : -1
+  const fieldErrorsById = new Map<string, ValidationIssue[]>()
+  for (const issue of issues) {
+    if (issue.severity !== 'error' || issue.target.documentId !== document?.id || !issue.target.fieldId) continue
+    const current = fieldErrorsById.get(issue.target.fieldId) ?? []
+    fieldErrorsById.set(issue.target.fieldId, [...current, issue])
+  }
   const handleFieldFocus = (documentId: string, sectionId: string, fieldId: string) => {
     selectFieldAction(documentId, sectionId, fieldId)
   }
@@ -2398,11 +2421,11 @@ function DocumentEditor() {
                   <div className="field-default">
                     <label>
                       字段名称
-                      <input name={`${field.id}-label`} autoComplete="off" value={field.label} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { label: event.currentTarget.value })} />
+                      <input name={`${field.id}-label`} autoComplete="off" aria-invalid={(fieldErrorsById.get(field.id)?.length ?? 0) > 0} aria-describedby={fieldErrorsById.has(field.id) ? fieldErrorDescriptionId(field.id) : undefined} value={field.label} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { label: event.currentTarget.value })} />
                     </label>
                     <label>
                       给未来模型看的填写规则
-                      <textarea name={`${field.id}-guidance`} autoComplete="off" rows={2} value={field.guidance} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { guidance: event.currentTarget.value })} />
+                      <textarea name={`${field.id}-guidance`} autoComplete="off" rows={2} aria-invalid={(fieldErrorsById.get(field.id)?.length ?? 0) > 0} aria-describedby={fieldErrorsById.has(field.id) ? fieldErrorDescriptionId(field.id) : undefined} value={field.guidance} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { guidance: event.currentTarget.value })} />
                     </label>
                     {field.repeatable ? (
                       <div className="repeatable-editor" aria-label={`${field.label} 内容条目列表`}>
@@ -2417,7 +2440,7 @@ function DocumentEditor() {
                           <div key={`${field.id}-${index}`} className="repeatable-row">
                             <label>
                               内容条目 {index + 1}
-                              <input name={`${field.id}-item-${index + 1}`} autoComplete="off" value={fieldValueToText(item)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onInput={(event) => updateFieldInstance(document.id, section.id, field.id, index, event.currentTarget.value)} />
+                              <input name={`${field.id}-item-${index + 1}`} autoComplete="off" aria-invalid={(fieldErrorsById.get(field.id)?.length ?? 0) > 0} aria-describedby={fieldErrorsById.has(field.id) ? fieldErrorDescriptionId(field.id) : undefined} value={fieldValueToText(item)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onInput={(event) => updateFieldInstance(document.id, section.id, field.id, index, event.currentTarget.value)} />
                             </label>
                             <div className="inline-actions">
                               <button type="button" className="icon-button" title="内容上移" aria-label="内容上移" disabled={index === 0} onClick={() => moveFieldInstance(document.id, section.id, field.id, index, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
@@ -2439,9 +2462,15 @@ function DocumentEditor() {
                     ) : (
                       <label>
                         当前内容
-                        <textarea name={`${field.id}-value`} autoComplete="off" rows={4} value={fieldValueToText(field.value)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateFieldText(document.id, section.id, field.id, event.currentTarget.value)} />
+                        <textarea name={`${field.id}-value`} autoComplete="off" rows={4} aria-invalid={(fieldErrorsById.get(field.id)?.length ?? 0) > 0} aria-describedby={fieldErrorsById.has(field.id) ? fieldErrorDescriptionId(field.id) : undefined} value={fieldValueToText(field.value)} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateFieldText(document.id, section.id, field.id, event.currentTarget.value)} />
                       </label>
                     )}
+                    {fieldErrorsById.has(field.id) ? (
+                      <div id={fieldErrorDescriptionId(field.id)} className="field-error-summary" role="alert">
+                        <strong>这个字段需要修复</strong>
+                        <ul>{fieldErrorsById.get(field.id)?.map((issue) => <li key={issue.id}>{issue.title}：{issue.message}</li>)}</ul>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="field-flags">
                     <label className="checkbox-label">
@@ -2546,7 +2575,15 @@ function DocumentEditor() {
                     </label>
                     <label>
                       格式限制
-                      <input name={`${field.id}-pattern`} autoComplete="off" value={field.validation.pattern ?? ''} onFocus={() => handleFieldFocus(document.id, section.id, field.id)} onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, pattern: event.currentTarget.value || undefined } })} />
+                      <input
+                        name={`${field.id}-pattern`}
+                        autoComplete="off"
+                        aria-invalid={fieldErrorsById.get(field.id)?.some((issue) => issue.ruleId === 'field-validation-pattern-invalid') ?? false}
+                        aria-describedby={fieldErrorsById.get(field.id)?.some((issue) => issue.ruleId === 'field-validation-pattern-invalid') ? fieldErrorDescriptionId(field.id) : undefined}
+                        value={field.validation.pattern ?? ''}
+                        onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
+                        onChange={(event) => updateField(document.id, section.id, field.id, { validation: { ...field.validation, pattern: event.currentTarget.value || undefined } })}
+                      />
                     </label>
                     <label className="wide-field">
                       高级校验
@@ -2554,6 +2591,8 @@ function DocumentEditor() {
                         name={`${field.id}-custom-rules`}
                         autoComplete="off"
                         rows={3}
+                        aria-invalid={fieldErrorsById.get(field.id)?.some((issue) => issue.ruleId.startsWith('field-validation-custom-unsupported-')) ?? false}
+                        aria-describedby={fieldErrorsById.get(field.id)?.some((issue) => issue.ruleId.startsWith('field-validation-custom-unsupported-')) ? fieldErrorDescriptionId(field.id) : undefined}
                         value={customRulesToText(field.validation.customRules)}
                         placeholder="warning | non-empty | 说明…"
                         onFocus={() => handleFieldFocus(document.id, section.id, field.id)}
@@ -2815,7 +2854,7 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
   function runSimulation() {
     setResultScenario(scenario)
     window.setTimeout(() => {
-      simulationResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      simulationResultRef.current?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       simulationResultRef.current?.focus({ preventScroll: true })
     }, 0)
   }
@@ -3021,6 +3060,7 @@ function InspectorPanel({ issues, onClose, returnFocus }: { issues: ValidationIs
   const panelRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const closeRef = useRef(onClose)
+  const returnFocusOnCloseRef = useRef(true)
   closeRef.current = onClose
   const field = selectedField(workflow, selectedDocumentId, selectedSectionId, selectedFieldId)
   const suggestionCount = issues.filter((issue) => issue.severity === 'suggestion').length
@@ -3056,13 +3096,33 @@ function InspectorPanel({ issues, onClose, returnFocus }: { issues: ValidationIs
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
-      returnFocus?.focus()
+      if (returnFocusOnCloseRef.current) returnFocus?.focus()
     }
   }, [returnFocus])
 
   function goToIssue(issue: ValidationIssue) {
+    returnFocusOnCloseRef.current = false
+    onClose()
     if (issue.target.documentId && issue.target.sectionId && issue.target.fieldId) {
       selectFieldAction(issue.target.documentId, issue.target.sectionId, issue.target.fieldId)
+      window.setTimeout(() => {
+        const fieldEditor = [...document.querySelectorAll<HTMLElement>('[data-field]')]
+          .find((element) => element.dataset.field === issue.target.fieldId)
+        const advancedDetails = fieldEditor?.querySelectorAll<HTMLDetailsElement>('.field-details').item(1)
+        if (issue.ruleId === 'field-validation-pattern-invalid' || issue.ruleId.startsWith('field-validation-custom-unsupported-')) {
+          if (advancedDetails) advancedDetails.open = true
+        }
+        const target = issue.ruleId === 'model-editability-guidance'
+          ? fieldEditor?.querySelector<HTMLElement>('textarea[name$="-guidance"]')
+          : issue.ruleId === 'field-validation-pattern-invalid'
+            ? fieldEditor?.querySelector<HTMLElement>('input[name$="-pattern"]')
+            : issue.ruleId.startsWith('field-validation-custom-unsupported-')
+              ? fieldEditor?.querySelector<HTMLElement>('textarea[name$="-custom-rules"]')
+              : fieldEditor?.querySelector<HTMLElement>('textarea[name$="-value"], input[name*="-item-"]')
+                ?? fieldEditor?.querySelector<HTMLElement>('textarea:not([disabled]), input:not([disabled]), select:not([disabled]), button:not([disabled])')
+        target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'center' })
+        target?.focus({ preventScroll: true })
+      }, 0)
       return
     }
     if (issue.target.documentId) {
@@ -3208,7 +3268,7 @@ function EmptyState({ title, detail, actionLabel, onAction }: { title: string; d
 
 function MainWorkspace({ issues }: { issues: ValidationIssue[] }) {
   const activeView = useWorkflowStore((state) => state.activeView)
-  if (activeView === 'documents') return <DocumentEditor />
+  if (activeView === 'documents') return <DocumentEditor issues={issues} />
   if (activeView === 'rules') return <RulesEditor />
   if (activeView === 'simulation') return <SimulationView issues={issues} />
   if (activeView === 'export') return <ExportCenter issues={issues} />
