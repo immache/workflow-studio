@@ -673,7 +673,7 @@ function WriteLocationPath({ value }: { value: string }) {
     <span className="write-location-path">
       {value.split(' > ').map((part, index) => (
         <span className="write-location-segment" key={`${part}-${index}`}>
-          {index > 0 ? <span aria-hidden="true">›</span> : null}
+          {index > 0 ? <span className="write-location-separator" aria-hidden="true">›</span> : null}
           <span>{part}</span>
         </span>
       ))}
@@ -1266,7 +1266,7 @@ function BuildWizard({
             <section className="builder-step" aria-labelledby="start-title">
               <span className="kicker">Step 1</span>
               <h2 id="start-title" tabIndex={-1}>先说清这套工作流要帮谁接手什么。</h2>
-              <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
+              <p>工作流的目的，是让模型知道始终该读什么、<span className="semantic-unit">信什么</span>、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
               {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="question-form">
                 <label>
@@ -1318,7 +1318,7 @@ function BuildWizard({
             <section className="builder-step" aria-labelledby="materials-title">
               <span className="kicker">Step 2</span>
               <h2 id="materials-title" tabIndex={-1}>先选择需要的内容文档。</h2>
-              <p><code>AGENTS.md</code> 不需要你第一步手写。你先选择内容文档，系统会在后面根据这些文档自动生成入口协议草案。</p>
+              <p><code>AGENTS.md</code> 不需要你<span className="semantic-unit">第一步</span>手写。你先选择内容文档，系统会在后面根据这些文档自动生成<span className="semantic-unit">入口协议草案</span>。</p>
               {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="material-grid">
                 {standardDocumentCards.map((item) => (
@@ -1574,7 +1574,7 @@ function BuildWizard({
           {step === 3 ? (
             <section className="builder-step protocol-builder-step" aria-labelledby="protocol-title">
               <span className="kicker">Step 4</span>
-              <h2 id="protocol-title" tabIndex={-1}>审查系统生成的入口协议草案。</h2>
+              <h2 id="protocol-title" tabIndex={-1}><span className="semantic-unit">审查系统生成的</span><span className="semantic-unit">入口协议草案。</span></h2>
               <p><code>AGENTS.md</code> 会串联所有内容文档。导入的协议和你的手工修改不会自动被覆盖；只有点击“重新生成草案”并确认后才会替换。</p>
               {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="protocol-toolbar">

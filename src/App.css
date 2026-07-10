@@ -944,7 +944,7 @@
   white-space: nowrap;
 }
 
-.write-location-segment > span:first-child {
+.write-location-separator {
   color: var(--accent);
 }
 
@@ -2230,6 +2230,10 @@ select:focus-visible,
 }
 
 .field-details summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  padding-block: 8px;
   cursor: pointer;
   color: var(--accent-ink);
   font-weight: 650;
@@ -2287,8 +2291,10 @@ select:focus-visible,
 .checkbox-label {
   display: inline-flex;
   grid-template-columns: auto 1fr;
+  min-height: 44px;
   align-items: center;
   gap: 7px;
+  padding-block: 8px;
   color: var(--ink);
 }
 
@@ -2974,12 +2980,6 @@ select:focus-visible,
 
   .preview-panel-heading label {
     width: 100%;
-  }
-
-  .checkbox-label,
-  .field-details summary {
-    min-height: 44px;
-    padding-block: 8px;
   }
 
   .metric-grid {

@@ -26,6 +26,12 @@ const states = {
     hash: '#build/step-5',
     activeStep: 5,
   },
+  'guided-export': {
+    selector: '#export-ready-title',
+    additionalSelectors: ['.builder-simulation-result'],
+    hash: '#build/step-6',
+    activeStep: 6,
+  },
   export: {
     selector: '#export-title',
     additionalSelectors: ['iframe.document-preview-frame'],
@@ -221,7 +227,11 @@ async function runViewport(browser, config) {
   await page.getByRole('button', { name: '查看结果预览' }).click()
   results.push(await capture(page, config.name, 'result-preview'))
 
-  await page.getByRole('button', { name: '打开完整导出页' }).click()
+  await page.getByRole('button', { name: '进入演练与导出' }).click()
+  await page.getByRole('button', { name: '演练“新会话”' }).click()
+  results.push(await capture(page, config.name, 'guided-export'))
+
+  await page.getByRole('button', { name: '查看完整导出详情' }).click()
   results.push(await capture(page, config.name, 'export'))
 
   await context.close()

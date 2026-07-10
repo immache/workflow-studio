@@ -363,6 +363,8 @@ describe('Workflow Studio domain model', () => {
     const markdown = exportMarkdownDocuments(workflow)
 
     expect(html['SPEC.html']).toContain('data-guidance="true"')
+    expect(html['SPEC.html']).toContain('<span class="semantic-unit">项目使命</span>')
+    expect(html['SPEC.html']).toContain('--muted:#64625C')
     expect(html['SPEC.html']).not.toContain('<script')
     expect(html['SPEC.html']).not.toContain('https://')
     expect(html['AGENTS.md']).toMatch(/^# /)
