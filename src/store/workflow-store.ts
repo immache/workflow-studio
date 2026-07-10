@@ -40,7 +40,9 @@ import {
   assertStorageAvailable,
   deleteWorkflowProject,
   listWorkflowProjects,
+  loadActiveWorkflowProjectId,
   loadWorkflowProject,
+  saveActiveWorkflowProjectId,
   saveWorkflowProject,
   type WorkflowProjectMeta,
 } from '../storage/indexeddb'
@@ -460,6 +462,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       if (projects.length === 0) {
         const workflow = createCurrentStandardWorkflow()
         await saveWorkflowProject(workflow)
+        await saveActiveWorkflowProjectId(workflow.workflowId)
         set({
           workflow,
           projects: [workflowMeta(workflow)],
@@ -470,8 +473,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         })
         return
       }
-      const workflow = await loadWorkflowProject(projects[0].id)
+      const storedActiveId = await loadActiveWorkflowProjectId()
+      const activeProjectId = projects.some((project) => project.id === storedActiveId) ? storedActiveId! : projects[0].id
+      const workflow = await loadWorkflowProject(activeProjectId)
       if (!workflow) throw new Error('无法读取最近项目。')
+      if (storedActiveId !== activeProjectId) await saveActiveWorkflowProjectId(activeProjectId)
       set({
         workflow,
         projects,
@@ -527,6 +533,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!get().storageAvailable) return
     const workflow = await loadWorkflowProject(id)
     if (!workflow) return
+    await saveActiveWorkflowProjectId(id)
     set({
       workflow,
       selectedDocumentId: selectedDocumentIdFor(workflow, get().selectedDocumentId),
@@ -538,14 +545,19 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
   deleteProject: async (id) => {
     if (!get().storageAvailable) return
+    const currentProjectId = get().workflow.workflowId
     await deleteWorkflowProject(id)
     const projects = await listWorkflowProjects()
     if (projects.length === 0) {
       await get().createPresetProject()
       return
     }
-    const workflow = await loadWorkflowProject(projects[0].id)
+    const nextProjectId = currentProjectId !== id && projects.some((project) => project.id === currentProjectId)
+      ? currentProjectId
+      : projects[0].id
+    const workflow = await loadWorkflowProject(nextProjectId)
     if (workflow) {
+      await saveActiveWorkflowProjectId(workflow.workflowId)
       set({
         workflow,
         projects,
@@ -1224,6 +1236,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ saveStatus: 'saving', storageMessage: '正在保存到本地浏览器。' })
     try {
       await saveWorkflowProject(workflow)
+      await saveActiveWorkflowProjectId(workflow.workflowId)
       const projects = await listWorkflowProjects()
       set({ projects, saveStatus: 'saved', storageMessage: '已保存到本地浏览器。' })
     } catch (error) {

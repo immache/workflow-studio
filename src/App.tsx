@@ -29,7 +29,7 @@ import './App.css'
 import { exportReadme } from './domain/export-markdown'
 import { exportDocumentsForFormat } from './domain/export-documents'
 import { projectDocumentFilename } from './domain/export-naming'
-import { createWorkflowZip, packageName } from './domain/export-zip'
+import { createWorkflowZip, packageName, serializeWorkflowJson } from './domain/export-zip'
 import { dimensionLabels, scoreWorkflow } from './domain/scoring'
 import {
   fieldValueToText,
@@ -2670,7 +2670,8 @@ function SimulationView({ issues }: { issues: ValidationIssue[] }) {
 function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const updateMaintenanceFormat = useWorkflowStore((state) => state.updateMaintenanceFormat)
-  const blocking = hasBlockingErrors(issues)
+  const readOnly = Boolean(workflow.readOnlyReason)
+  const blocking = hasBlockingErrors(issues) || readOnly
   const blockingIssues = issues.filter((issue) => issue.severity === 'error')
   const [message, setMessage] = useState('')
   const [isExporting, setIsExporting] = useState(false)
@@ -2680,6 +2681,10 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
     : Object.entries(primaryDocs)[0]
 
   async function downloadZip() {
+    if (readOnly) {
+      setMessage('该工作流来自更高 schemaVersion，只能查看，不能降级导出。')
+      return
+    }
     if (blocking) {
       setMessage('存在未解决 Error，导出已阻止。')
       return
@@ -2705,7 +2710,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
           <p>确认 ZIP 内每个文件的用途；有 Error 时必须先修复，不能绕过导出。</p>
         </div>
         <div className="inline-actions">
-          <button type="button" className="button button-secondary" onClick={() => downloadText(JSON.stringify(workflow, null, 2), 'workflow.json')}>
+          <button type="button" className="button button-secondary" disabled={readOnly} onClick={() => downloadText(serializeWorkflowJson(workflow), 'workflow.json')}>
             <FileJson size={16} aria-hidden="true" />
             workflow.json
           </button>
@@ -2719,7 +2724,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
       <section className="form-band">
         <label>
           主维护格式
-          <select name="maintenance-format" value={workflow.maintenanceFormat} onChange={(event) => updateMaintenanceFormat(event.currentTarget.value as MaintenanceFormat, workflow.secondaryFormat)}>
+          <select name="maintenance-format" disabled={readOnly} value={workflow.maintenanceFormat} onChange={(event) => updateMaintenanceFormat(event.currentTarget.value as MaintenanceFormat, workflow.secondaryFormat)}>
             <option value="html">{maintenanceFormatCopy.html.label}</option>
             <option value="markdown">{maintenanceFormatCopy.markdown.label}</option>
           </select>
@@ -2727,7 +2732,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
         </label>
         <label>
           次级格式
-          <select name="secondary-format" value={workflow.secondaryFormat ?? ''} onChange={(event) => updateMaintenanceFormat(workflow.maintenanceFormat, event.currentTarget.value ? event.currentTarget.value as MaintenanceFormat : undefined)}>
+          <select name="secondary-format" disabled={readOnly} value={workflow.secondaryFormat ?? ''} onChange={(event) => updateMaintenanceFormat(workflow.maintenanceFormat, event.currentTarget.value ? event.currentTarget.value as MaintenanceFormat : undefined)}>
             <option value="">不生成</option>
             <option value="html">{maintenanceFormatCopy.html.label}</option>
             <option value="markdown">{maintenanceFormatCopy.markdown.label}</option>
@@ -2735,7 +2740,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
         </label>
         <div className={blocking ? 'export-gate blocked' : 'export-gate'}>
           {blocking ? <AlertTriangle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
-          <span>{blocking ? 'Error 未解决，ZIP 导出禁用。' : '没有阻塞性错误，可以导出。'}</span>
+          <span>{readOnly ? '高版本工作流仅供查看，所有降级导出已禁用。' : blocking ? 'Error 未解决，ZIP 导出禁用。' : '没有阻塞性错误，可以导出。'}</span>
         </div>
       </section>
 

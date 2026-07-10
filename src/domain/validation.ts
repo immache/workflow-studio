@@ -1,4 +1,5 @@
 import {
+  HISTORY_STATUSES,
   fieldValueToText,
   isFieldEmpty,
   type ValidationIssue,
@@ -203,7 +204,10 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     workflow.workflowId,
     ...workflow.documents.flatMap((document) => [
       document.id,
-      ...document.sections.flatMap((section) => [section.id, ...section.fields.map((field) => field.id)]),
+      ...document.sections.flatMap((section) => [
+        section.id,
+        ...section.fields.flatMap((field) => [field.id, ...field.validation.customRules.map((rule) => rule.id)]),
+      ]),
     ]),
     ...workflow.rules.recoveryOrder.map((step) => step.id),
     ...workflow.rules.sourcePriority.map((rule) => rule.id),
@@ -302,6 +306,29 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     )
   }
 
+  for (const protocol of protocolDocuments.filter(usesManagedProtocolTemplate)) {
+    const protocolText = [
+      protocol.description,
+      ...protocol.sections.flatMap((section) => [
+        section.title,
+        section.purpose,
+        ...section.fields.flatMap((field) => [field.label, field.guidance, fieldValueToText(field.value)]),
+      ]),
+    ].join('\n')
+    const missingFilenames = workflow.documents
+      .filter((document) => document.id !== protocol.id && !protocolText.includes(document.filename.trim()))
+      .map((document) => document.filename)
+    if (missingFilenames.length > 0) {
+      issues.push(issue({
+        severity: 'error',
+        title: '入口协议缺少实际文件引用',
+        message: `${protocol.filename} 未引用当前文档文件名：${missingFilenames.join('、')}。请重新生成协议或修正引用后再导出。`,
+        target: { documentId: protocol.id },
+        ruleId: 'recovery-protocol-filename-coverage',
+      }))
+    }
+  }
+
   if (workflow.rules.sourcePriority.length === 0) {
     issues.push(
       issue({
@@ -382,6 +409,17 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
   }
 
   const recoveryStepByDocumentId = new Map(workflow.rules.recoveryOrder.map((step) => [step.documentId, step]))
+  for (const document of workflow.documents.filter((candidate) => candidate.role !== 'status' && candidate.role !== 'plan')) {
+    if (!recoveryStepByDocumentId.has(document.id)) {
+      issues.push(issue({
+        severity: 'error',
+        title: '文档未进入恢复路径',
+        message: `${document.filename} 已包含在工作流中，但恢复顺序没有说明何时读取它。`,
+        target: { documentId: document.id },
+        ruleId: 'recovery-document-coverage',
+      }))
+    }
+  }
   for (const document of workflow.documents.filter((candidate) => candidate.role === 'status' || candidate.role === 'plan')) {
     const recoveryStep = recoveryStepByDocumentId.get(document.id)
     if (!recoveryStep || !recoveryStep.required) {
@@ -780,6 +818,18 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         ruleId: 'maintenance-history-policy',
       }),
     )
+  }
+  const invalidHistoryStatuses = workflow.rules.historyPolicy.allowedStatuses.filter(
+    (status) => !(HISTORY_STATUSES as readonly string[]).includes(status),
+  )
+  if (invalidHistoryStatuses.length > 0) {
+    issues.push(issue({
+      severity: 'error',
+      title: '历史状态无效',
+      message: `历史状态只能使用 schema 定义值；无效值：${invalidHistoryStatuses.join('、')}。`,
+      target: {},
+      ruleId: 'maintenance-history-status-values',
+    }))
   }
 
   const resolved: ValidationIssue[] = issues.map((candidate) => ({

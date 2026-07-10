@@ -10,6 +10,7 @@ export type WorkflowProjectMeta = {
 
 const database = createStore('workflow-studio', 'workflows')
 const projectPrefix = 'workflow:'
+const activeProjectKey = 'active-workflow-id'
 
 function projectKey(id: string): string {
   return `${projectPrefix}${id}`
@@ -38,6 +39,14 @@ export async function listWorkflowProjects(): Promise<WorkflowProjectMeta[]> {
 
 export async function loadWorkflowProject(id: string): Promise<WorkflowSchema | undefined> {
   return get<WorkflowSchema>(projectKey(id), database)
+}
+
+export async function loadActiveWorkflowProjectId(): Promise<string | undefined> {
+  return get<string>(activeProjectKey, database)
+}
+
+export async function saveActiveWorkflowProjectId(id: string): Promise<void> {
+  await set(activeProjectKey, id, database)
 }
 
 export async function saveWorkflowProject(workflow: WorkflowSchema): Promise<void> {

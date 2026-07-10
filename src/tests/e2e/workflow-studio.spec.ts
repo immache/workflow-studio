@@ -181,6 +181,43 @@ test('reports overview import failures and restores inspector focus on Escape', 
   await expect(inspectorTrigger).toBeFocused()
 })
 
+test('disables every downgrade export for higher-version read-only imports', async ({ page }) => {
+  await page.goto('/#advanced/overview')
+  await page.getByLabel('从总览导入工作流 JSON 或 ZIP').setInputFiles({
+    name: 'future-workflow.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      schemaVersion: '99.0.0',
+      name: '未来版本工作流',
+      description: '当前版本只能查看。',
+      futureSentinel: { preserve: true },
+    })),
+  })
+
+  await expect(page.locator('.read-only-banner')).toContainText(/高于当前应用.*只读/)
+  await page.getByRole('link', { name: /生成可复制的工作流包/ }).click()
+  await expect(page.getByRole('button', { name: 'workflow.json', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '下载工作流包', exact: true })).toBeDisabled()
+  await expect(page.getByText('高版本工作流仅供查看，所有降级导出已禁用。')).toBeVisible()
+})
+
+test('restores the last opened project instead of the most recently edited project', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'Project switcher is a desktop advanced-editor control')
+  await page.goto('/#advanced/overview')
+  await page.getByLabel('项目名称').fill('较早但当前打开的项目')
+  await expect(page.locator('.project-list')).toContainText('较早但当前打开的项目')
+
+  await page.getByRole('button', { name: '标准恢复文档', exact: true }).click()
+  await page.getByLabel('项目名称').fill('更新较晚的项目')
+  await expect(page.locator('.project-list')).toContainText('更新较晚的项目')
+  await page.locator('.project-item').filter({ hasText: '较早但当前打开的项目' }).click()
+  await expect(page.getByLabel('项目名称')).toHaveValue('较早但当前打开的项目')
+
+  await page.reload()
+  await expect(page.getByLabel('项目名称')).toHaveValue('较早但当前打开的项目')
+  await expect(page.locator('.project-item.active')).toContainText('较早但当前打开的项目')
+})
+
 test('contains a long unbroken workflow name on mobile', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Mobile overflow regression')
   await page.goto('/#build/step-1')

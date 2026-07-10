@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_SCORING_SETTINGS,
+  HISTORY_STATUSES,
   SCHEMA_VERSION,
   createField,
   scalarValue,
@@ -365,6 +366,9 @@ function assertWorkflowShape(value: unknown): asserts value is WorkflowSchema {
   assertOneOf(value.rules.conflictPolicy.unresolvedConflictSeverity, ['error', 'warning'] as const, 'conflictPolicy.unresolvedConflictSeverity')
   assertBoolean(value.rules.historyPolicy.appendOnly, 'historyPolicy.appendOnly')
   assertStringArray(value.rules.historyPolicy.allowedStatuses, 'historyPolicy.allowedStatuses')
+  for (const status of value.rules.historyPolicy.allowedStatuses) {
+    assertOneOf(status, HISTORY_STATUSES, 'historyPolicy.allowedStatuses[]')
+  }
   assertBoolean(value.rules.historyPolicy.requireIndexUpdate, 'historyPolicy.requireIndexUpdate')
   assertOneOf(value.rules.historyPolicy.obsoleteHandling, ['mark-obsolete', 'archive-with-replacement', 'delete'] as const, 'historyPolicy.obsoleteHandling')
   if (!isRecord(value.exportSettings) || value.exportSettings.includeWorkflowJson !== true || value.exportSettings.includeReadme !== true) throw new Error('exportSettings 结构无效。')

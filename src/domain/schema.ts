@@ -184,9 +184,12 @@ export type ConflictPolicy = {
   unresolvedConflictSeverity: 'error' | 'warning'
 }
 
+export const HISTORY_STATUSES = ['仍有效参考', '已失效归档', 'active-reference', 'obsolete-archive'] as const
+export type HistoryStatus = typeof HISTORY_STATUSES[number]
+
 export type HistoryPolicy = {
   appendOnly: boolean
-  allowedStatuses: ('仍有效参考' | '已失效归档' | 'active-reference' | 'obsolete-archive')[]
+  allowedStatuses: HistoryStatus[]
   requireIndexUpdate: boolean
   obsoleteHandling: 'mark-obsolete' | 'archive-with-replacement' | 'delete'
 }

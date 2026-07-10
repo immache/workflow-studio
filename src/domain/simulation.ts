@@ -7,6 +7,7 @@ const recoveryBlockingRules = new Set([
   'recovery-protocol-first',
   'recovery-realtime-status',
   'recovery-required-document-order',
+  'recovery-document-coverage',
   'recovery-next-atomic-step-present',
   'recovery-next-atomic-step-value',
 ])
@@ -21,6 +22,10 @@ const scenarioLabels: Record<SimulationScenario, string> = {
   'insufficient-history': '历史不足',
   'unclear-work-entry': '工具或工作入口不明确',
   'handoff-after-failure': '失败后交接',
+}
+
+function globalSourcePriorityRule(workflow: WorkflowSchema) {
+  return workflow.rules.sourcePriority.find((rule) => rule.scope === 'global') ?? workflow.rules.sourcePriority[0]
 }
 
 export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationScenario): SimulationResult {
@@ -73,8 +78,24 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
     }
   })
 
+  const scenarioDocumentRole = scenario === 'missing-preference'
+    ? 'preference'
+    : scenario === 'unclear-term'
+      ? 'context'
+      : scenario === 'insufficient-history' || scenario === 'handoff-after-failure'
+        ? 'history'
+        : undefined
+  if (scenarioDocumentRole) {
+    const scenarioDocument = workflow.documents.find((document) => document.role === scenarioDocumentRole)
+    if (!scenarioDocument) {
+      blockers.push(`没有${scenarioDocumentRole === 'preference' ? '用户偏好' : scenarioDocumentRole === 'context' ? '术语解释' : '历史'}文档，无法完成“${scenarioLabels[scenario]}”恢复。`)
+    } else if (!readDocumentIds.has(scenarioDocument.id)) {
+      blockers.push(`${scenarioDocument.filename} 没有进入本次恢复读取路径，无法完成“${scenarioLabels[scenario]}”恢复。`)
+    }
+  }
+
   if (scenario === 'goal-conflict') {
-    const sourceRule = workflow.rules.sourcePriority[0]
+    const sourceRule = globalSourcePriorityRule(workflow)
     if (!sourceRule) {
       blockers.push('缺少来源优先级规则，无法裁决目标冲突。')
       steps.push({
@@ -102,18 +123,12 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
     }
   }
 
-  if (scenario === 'unclear-term' && !workflow.documents.some((document) => document.role === 'context')) {
-    blockers.push('没有术语解释文档，术语不清楚时需要询问用户。')
-  }
-  if (scenario === 'insufficient-history' && !workflow.documents.some((document) => document.role === 'history')) {
-    blockers.push('没有历史文档，历史证据不足时需要检查工作区或询问用户。')
-  }
   if (scenario === 'stale-status') {
     const statusDocument = workflow.documents.find((document) => document.role === 'status' && document.lifecycle === 'realtime')
     if (!statusDocument) {
       blockers.push('没有实时状态文档，无法核对状态是否过期。')
     } else {
-      const sourceRule = workflow.rules.sourcePriority[0]
+      const sourceRule = globalSourcePriorityRule(workflow)
       const workspaceSource = sourceRule?.orderedSources.find((source) => source.sourceType === 'workspace-fact')
       steps.push({
         order: steps.length + 1,
@@ -131,9 +146,6 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
         reason: workspaceSource ? '状态过期时优先采用新鲜工作区事实。' : '缺少工作区事实来源，需要人工确认。',
       })
     }
-  }
-  if (scenario === 'missing-preference' && !workflow.documents.some((document) => document.role === 'preference')) {
-    blockers.push('没有用户偏好文档，不能恢复长期偏好。')
   }
   if (scenario === 'unclear-work-entry' && !workflow.documents.some((document) => document.sections.some((section) => section.fields.some((field) => field.id.includes('work-entry'))))) {
     blockers.push('没有工作入口字段，恢复时可能误填根目录。')

@@ -4,7 +4,7 @@ import { createCurrentStandardWorkflow, createBlankWorkflow } from '../../data/p
 import { createModularWorkflow } from '../../data/modules/standard-workflow-modules'
 import { exportHtmlDocuments } from '../../domain/export-html'
 import { exportMarkdownDocuments, exportReadme } from '../../domain/export-markdown'
-import { createWorkflowZip, packageName } from '../../domain/export-zip'
+import { createWorkflowZip, packageName, serializeWorkflowJson } from '../../domain/export-zip'
 import { parseImportedWorkflow, parseWorkflowJson } from '../../domain/import-export'
 import { scoreWorkflow } from '../../domain/scoring'
 import { fieldValueToText, scalarValue, SCHEMA_VERSION, type WorkflowSchema } from '../../domain/schema'
@@ -705,6 +705,94 @@ describe('Workflow Studio domain model', () => {
     workflow.documents[0].sections[0].fields[0].options = [{ value: 'invalid' }] as never
 
     await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/field\.option\.label/)
+  })
+
+  it('prevents higher-version read-only placeholders from being downgraded through export', async () => {
+    const readOnly = await parseWorkflowJson(JSON.stringify({
+      schemaVersion: '99.0.0',
+      name: '未来版本工作流',
+      description: '包含当前版本无法理解的数据。',
+      futureSentinel: { preserve: true },
+    }))
+
+    expect(readOnly.readOnlyReason).toContain('只读')
+    expect(() => serializeWorkflowJson(readOnly)).toThrow(/不能降级导出/)
+    await expect(createWorkflowZip(readOnly)).rejects.toThrow(/不能降级导出/)
+  })
+
+  it('blocks managed protocols that do not mention the current exported document filename', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    const status = workflow.documents.find((document) => document.role === 'status')
+    if (!status) throw new Error('missing status fixture')
+    status.filename = 'NOW.html'
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-protocol-filename-coverage', severity: 'error' }),
+    ]))
+    await expect(createWorkflowZip(workflow)).rejects.toThrow(/入口协议缺少实际文件引用/)
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/入口协议缺少实际文件引用/)
+  })
+
+  it.each([
+    ['missing-preference', 'preference'],
+    ['unclear-term', 'context'],
+    ['insufficient-history', 'history'],
+  ] as const)('blocks %s simulation when its document is absent from the recovery path', (scenario, role) => {
+    const workflow = createCurrentStandardWorkflow()
+    const document = workflow.documents.find((candidate) => candidate.role === role)
+    if (!document) throw new Error(`missing ${role} fixture`)
+    workflow.rules.recoveryOrder = workflow.rules.recoveryOrder.filter((step) => step.documentId !== document.id)
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-document-coverage', severity: 'error' }),
+    ]))
+    expect(simulateRecovery(workflow, scenario)).toMatchObject({
+      status: 'blocked',
+      readDocuments: expect.not.arrayContaining([document.filename]),
+      blockers: expect.arrayContaining([expect.stringContaining(document.filename)]),
+    })
+  })
+
+  it('uses the global source-priority rule for stale-status simulation', () => {
+    const workflow = createCurrentStandardWorkflow()
+    workflow.rules.sourcePriority.unshift({
+      id: 'field-only-source-rule',
+      scope: 'field',
+      targetId: workflow.documents[0].sections[0].fields[0].id,
+      orderedSources: [],
+      tieBreaker: 'manual-review',
+      reason: '只适用于单个字段。',
+    })
+
+    const result = simulateRecovery(workflow, 'stale-status')
+    expect(result.conflicts.find((conflict) => conflict.id === 'stale-status-workspace-fact')).toMatchObject({
+      resolution: 'resolved',
+      selectedSource: { sourceType: 'workspace-fact' },
+    })
+  })
+
+  it('rejects duplicate custom validation rule IDs', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    const field = workflow.documents[0].sections[0].fields[0]
+    field.validation.customRules = [
+      { id: 'duplicate-custom-rule', description: '第一条规则', severity: 'error', predicate: 'valid-email' },
+      { id: 'duplicate-custom-rule', description: '第二条规则', severity: 'warning', predicate: 'valid-url' },
+    ]
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'structure-unique-ids', severity: 'error' }),
+    ]))
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/ID 重复/)
+  })
+
+  it('rejects history statuses outside the schema enum', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    workflow.rules.historyPolicy.allowedStatuses = ['not-a-schema-status'] as never
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'maintenance-history-status-values', severity: 'error' }),
+    ]))
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/historyPolicy\.allowedStatuses/)
   })
 
   it('bounds direct JSON file imports before reading oversized files and honors cancellation', async () => {
