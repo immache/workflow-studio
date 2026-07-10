@@ -20,7 +20,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:learn",
@@ -43,7 +44,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:build-purpose",
@@ -71,7 +73,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:document-selection",
@@ -99,7 +102,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:module-canvas",
@@ -127,7 +131,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 2,
     "documentTabColumns": 2,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:agents-draft-review",
@@ -155,7 +160,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:result-preview",
@@ -183,7 +189,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:guided-export",
@@ -211,7 +218,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "desktop:export",
@@ -234,7 +242,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:home",
@@ -257,7 +266,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:learn",
@@ -280,7 +290,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:build-purpose",
@@ -308,7 +319,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:document-selection",
@@ -336,7 +348,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:module-canvas",
@@ -364,7 +377,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 1,
     "documentTabColumns": 2,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:agents-draft-review",
@@ -392,7 +406,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:result-preview",
@@ -420,7 +435,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:guided-export",
@@ -448,7 +464,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "tablet:export",
@@ -471,7 +488,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:home",
@@ -494,7 +512,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:learn",
@@ -517,7 +536,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:build-purpose",
@@ -545,7 +565,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:document-selection",
@@ -573,7 +594,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:module-canvas",
@@ -601,7 +623,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 1,
     "documentTabColumns": 1,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:agents-draft-review",
@@ -629,7 +652,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:result-preview",
@@ -657,7 +681,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:guided-export",
@@ -685,7 +710,8 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   },
   {
     "label": "mobile:export",
@@ -708,6 +734,7 @@
     "protocolMapVisible": false,
     "moduleWorkbenchColumns": 0,
     "documentTabColumns": 0,
-    "moduleChoiceContentOverflows": 0
+    "moduleChoiceContentOverflows": 0,
+    "semanticUnitFailures": []
   }
 ]

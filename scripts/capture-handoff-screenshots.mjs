@@ -77,6 +77,13 @@ async function metrics(page, label, expected) {
         return childRect.left < buttonRect.left - 1 || childRect.right > buttonRect.right + 1
       })
     }).length
+    const semanticUnitFailures = [...document.querySelectorAll('.semantic-unit')].filter((element) => {
+      const rect = element.getBoundingClientRect()
+      return element.getClientRects().length !== 1
+        || rect.width > window.innerWidth - 24
+        || rect.left < -1
+        || rect.right > window.innerWidth + 1
+    }).map((element) => element.textContent?.trim()).filter(Boolean)
     const selectorIsVisible = (selector) => {
       const element = document.querySelector(selector)
       const rect = element?.getBoundingClientRect()
@@ -130,6 +137,7 @@ async function metrics(page, label, expected) {
       moduleWorkbenchColumns,
       documentTabColumns,
       moduleChoiceContentOverflows,
+      semanticUnitFailures,
     }
   }, { currentLabel: label, currentExpected: expected })
 }
@@ -258,6 +266,7 @@ const failures = allMetrics.filter((item) =>
   item.onboardingRawTerms.length > 0 ||
   item.protocolMapVisible ||
   item.moduleChoiceContentOverflows > 0 ||
+  item.semanticUnitFailures.length > 0 ||
   (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.moduleWorkbenchColumns > 2) ||
   (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.documentTabColumns > 2) ||
   (item.label.startsWith('mobile:module-canvas') && item.documentTabColumns > 1) ||

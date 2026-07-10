@@ -545,7 +545,7 @@ function ModuleFieldEditor({
             name={`${field.id}-value`}
             autoComplete="off"
             rows={document.role === 'protocol'
-              ? Math.min(18, Math.max(10, fieldText.split('\n').length + Math.ceil(fieldText.length / 36)))
+              ? Math.min(14, Math.max(6, fieldText.split('\n').length + Math.ceil(fieldText.length / 42)))
               : Math.min(8, Math.max(3, fieldText.split('\n').length + 1))}
             value={fieldText}
             placeholder={fieldValuePlaceholder(field, document)}
@@ -720,8 +720,8 @@ function DocumentPreview({ filename, content }: { filename?: string; content?: s
 }
 
 function SemanticCopy({ text }: { text: string }) {
-  return text.split(/(入口协议草案|请审查|第一步|信什么|项目使命|目标、范围与成功标准)/g).map((part, index) => (
-    /^(入口协议草案|请审查|第一步|信什么|项目使命|目标、范围与成功标准)$/.test(part)
+  return text.split(/(入口协议草案|新鲜工作区事实|长期计划|你不需要|下一原子步骤|下一步|阻塞|请审查|第一步|信什么|项目使命|目标、范围与成功标准)/g).map((part, index) => (
+    /^(入口协议草案|新鲜工作区事实|长期计划|你不需要|下一原子步骤|下一步|阻塞|请审查|第一步|信什么|项目使命|目标、范围与成功标准)$/.test(part)
       ? <span className="semantic-unit" key={`${part}-${index}`}>{part}</span>
       : part
   ))
@@ -805,7 +805,7 @@ function LearnPage({ onBuild }: { onBuild: (step: BuildStep) => void }) {
         <span className="kicker">Workflow Primer</span>
         <h1 id="learn-title">先弄懂工作流，再开始填内容。</h1>
         <p>工作流的目的，是让模型知道始终该读什么、<span className="semantic-unit">信什么</span>、接着做什么。</p>
-        <p>下面这些章节解释搭建时最容易卡住的概念，你不需要记住底层字段名。</p>
+        <p><SemanticCopy text="下面这些章节解释搭建时最容易卡住的概念，你不需要记住底层字段名。" /></p>
       </section>
       <section className="primer-map" aria-label="模块化搭建方法">
         <article>
@@ -830,13 +830,13 @@ function LearnPage({ onBuild }: { onBuild: (step: BuildStep) => void }) {
             <span className="lesson-number">{String(index + 1).padStart(2, '0')}</span>
             <div>
               <h2>{chapter.title}</h2>
-              <p className="lesson-question">{chapter.question}</p>
-              <p>{chapter.answer}</p>
-              <p className="lesson-example">{chapter.example}</p>
-              <p className="lesson-mistake">{chapter.mistake}</p>
+              <p className="lesson-question"><SemanticCopy text={chapter.question} /></p>
+              <p><SemanticCopy text={chapter.answer} /></p>
+              <p className="lesson-example"><SemanticCopy text={chapter.example} /></p>
+              <p className="lesson-mistake"><SemanticCopy text={chapter.mistake} /></p>
               <details className="lesson-help">
                 <summary>看不懂这里</summary>
-                <p>{chapter.help}</p>
+                <p><SemanticCopy text={chapter.help} /></p>
               </details>
               <button type="button" className="button button-secondary lesson-action" onClick={() => onBuild(chapter.buildStep)}>
                 {chapter.action}
@@ -908,7 +908,10 @@ function BuildWizard({
   const focusFirstActionOnStepRef = useRef(false)
   const draftWorkflowIdRef = useRef(initialDraft.workflowId)
   const skipDraftSaveRef = useRef(false)
-  const contentDocuments = workflow.documents.filter((document) => document.role !== 'protocol')
+  const contentDocuments = useMemo(
+    () => workflow.documents.filter((document) => document.role !== 'protocol'),
+    [workflow.documents],
+  )
   const canvasDocument = contentDocuments.find((document) => document.id === selectedCanvasDocumentId) ?? contentDocuments[0]
   const protocolDocument = workflow.documents.find((document) => document.role === 'protocol')
   const canvasSection = canvasDocument?.sections.find((section) => section.id === selectedCanvasSectionId) ?? canvasDocument?.sections[0]
@@ -1056,7 +1059,7 @@ function BuildWizard({
         ? current
         : selectedDocument.sections[0]?.id ?? ''
     ))
-  }, [selectedCanvasDocumentId, workflow.documents])
+  }, [contentDocuments, selectedCanvasDocumentId])
 
   useEffect(() => {
     if (!protocolDocument) {
@@ -1076,7 +1079,7 @@ function BuildWizard({
         ? current
         : contentDocuments[0]?.id ?? ''
     ))
-  }, [workflow.documents])
+  }, [contentDocuments])
 
   function goToStep(nextStep: BuildStep) {
     onStepChange(nextStep)
@@ -1329,7 +1332,7 @@ function BuildWizard({
           {step === 0 ? (
             <>
               <h1 id="build-title" aria-label="像搭积木一样设计工作流。"><span className="line-lock">像搭积木一样</span><span className="line-lock">设计工作流。</span></h1>
-              <p>先确定需要哪些内容文档，再逐份文档添加章节、字段、展示格式和常驻说明。入口协议草案由系统后置生成，你最后审查。</p>
+              <p><SemanticCopy text="先确定需要哪些内容文档，再逐份文档添加章节、字段、展示格式和常驻说明。入口协议草案由系统后置生成，你最后审查。" /></p>
             </>
           ) : (
             <>
@@ -1357,7 +1360,7 @@ function BuildWizard({
 
         <div className="builder-panel">
           {step === 0 ? (
-            <section className="builder-step" aria-labelledby="start-title">
+            <section className="builder-step purpose-builder-step" aria-labelledby="start-title">
               <span className="kicker">Step 1</span>
               <h2 id="start-title" tabIndex={-1}>先说清这套工作流要帮谁接手什么。</h2>
               <p>工作流的目的，是让模型知道始终该读什么、<span className="semantic-unit">信什么</span>、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
@@ -1419,15 +1422,15 @@ function BuildWizard({
                   <label key={item.id} className={selectedContentDocs.has(item.id) ? 'material-card document-card selected' : 'material-card document-card'}>
                     <input name={`document-${item.id}`} type="checkbox" checked={selectedContentDocs.has(item.id)} onChange={() => toggleContentDocument(item.id)} />
                     <strong><span>{item.title}</span><code>{item.filename}</code>{item.recommended ? <em>推荐</em> : null}</strong>
-                    <span>{item.description}</span>
-                    <small>{item.whenToUse}</small>
+                    <span><SemanticCopy text={item.description} /></span>
+                    <small><SemanticCopy text={item.whenToUse} /></small>
                   </label>
                 ))}
               </div>
               <div className={selectedContentDocs.size > 0 ? 'selection-summary' : 'selection-summary selection-summary-empty'} role="status">
-                <p>{selectedContentDocs.size > 0
+                <p><SemanticCopy text={selectedContentDocs.size > 0
                   ? `已选择 ${selectedContentDocs.size} 份内容文档；下一步会生成可编辑的章节和字段。`
-                  : '尚未选择内容文档。AGENTS.md 只负责串联规则，不适合独自承载项目状态；至少还要选择 1 份内容文档。'}</p>
+                  : '尚未选择内容文档。AGENTS.md 只负责串联规则，不适合独自承载项目状态；至少还要选择 1 份内容文档。'} /></p>
                 {selectedContentDocs.size === 0 ? (
                   <button type="button" className="button button-ghost" onClick={() => setSelectedContentDocs(new Set<ContentDocumentId>(['status']))}>
                     采用最小组合：STATUS.html
@@ -1448,7 +1451,7 @@ function BuildWizard({
               ) : null}
               <section className="write-map" aria-label="写入地图">
                 <strong>写入地图</strong>
-                <p>下一步会生成你选中的内容文档；入口协议草案稍后写入 <code>AGENTS.md</code>，并引用这些文档。</p>
+                <p><span className="semantic-unit">下一步</span>会生成你选中的内容文档；<span className="semantic-unit">入口协议草案</span>稍后写入 <code>AGENTS.md</code>，并引用这些文档。</p>
               </section>
               <div className="builder-actions">
                 <button type="button" className="button button-secondary" onClick={() => goToStep(0)}><ArrowLeft size={16} aria-hidden="true" />返回用途说明</button>
@@ -1469,7 +1472,7 @@ function BuildWizard({
             <section className="builder-step module-builder-step" aria-labelledby="content-title">
               <span className="kicker">Step 3</span>
               <h2 id="content-title" tabIndex={-1}>逐份文档搭建模块。</h2>
-              <p>先确认文档名称和职责，再编辑章节与字段。每份文档完成后都要标记为已检查，系统才会生成入口协议草案。</p>
+              <p><SemanticCopy text="先确认文档名称和职责，再编辑章节与字段。每份文档完成后都要标记为已检查，系统才会生成入口协议草案。" /></p>
               {generatedMessage ? <p className="notice" aria-live="polite"><SemanticCopy text={generatedMessage} /></p> : null}
               <div className="review-progress" aria-label="内容文档检查进度">
                 <strong>{reviewedDocumentCount}/{contentDocuments.length} 份文档已检查</strong>
@@ -1779,43 +1782,16 @@ function BuildWizard({
               <span className="kicker">Step 5</span>
               <h2 id="preview-title" tabIndex={-1}><span className="semantic-unit">结果预览：</span><span className="semantic-unit">文件树、</span><span className="semantic-unit">模块分布</span><span className="semantic-unit">和恢复路径。</span></h2>
               <p>这里不做复杂关系画布。初版只展示导出前必须看懂的结果：有哪些文件、入口协议怎么引用它们、恢复演练会怎么读。</p>
-              <section className="write-map" aria-label="写入地图">
+              <section className="write-map preview-readonly-note" aria-label="写入地图">
                 <strong>只读预览</strong>
                 <p>本步不会改写文档。文件树来自当前导出结果，恢复读取路径来自 <code>AGENTS.md</code> 和恢复规则；发现问题请返回前两步修改。</p>
               </section>
               <div className="result-preview-grid">
-                <section className="plain-panel">
-                  <h3>文件树</h3>
-                  <ul className="file-list">
-                    <li><code>workflow.json</code><span>结构化事实源，可重新导入。</span></li>
-                    <li><code>README.md</code><span>说明如何使用导出包。</span></li>
-                    {Object.keys(primaryDocs).map((filename) => {
-                      const source = workflow.documents.find((document) => document.filename === filename || (document.role !== 'protocol' && filename.replace(/\.html$/i, '') === document.filename.replace(/\.(html|md)$/i, '')))
-                      const fieldCount = source?.sections.reduce((total, section) => total + section.fields.length, 0) ?? 0
-                      const sectionNames = source?.sections.map((section) => section.title).filter(Boolean) ?? []
-                      return (
-                        <li key={filename}>
-                          <code>documents/{filename}</code>
-                          <span>{source?.title || '未命名文档'} · {sectionNames.length} 个章节、{fieldCount} 个字段</span>
-                          {sectionNames.length > 0 ? <small>章节：{sectionNames.join('、')}</small> : <small>暂未添加章节</small>}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </section>
-                <section className="plain-panel">
-                  <h3>恢复读取路径</h3>
-                  <ol className="read-order-list">
-                    {workflow.rules.recoveryOrder.map((stepItem, index) => {
-                      const document = workflow.documents.find((item) => item.id === stepItem.documentId)
-                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document ? projectDocumentFilename(document, 'html') : '未知文档'}</strong><small>{stepItem.condition}</small></li>
-                    })}
-                  </ol>
-                </section>
-                <section className="plain-panel document-preview-panel">
+                <section className="plain-panel document-preview-panel result-preview-primary">
                   <div className="preview-panel-heading">
                     <div>
-                      <h3>渲染预览</h3>
+                      <span className="kicker">Rendered document</span>
+                      <h3>先看真实导出效果</h3>
                       <p>切换文件，逐份确认章节、字段说明和当前内容在导出后是否清楚。</p>
                     </div>
                     <label>
@@ -1831,6 +1807,42 @@ function BuildWizard({
                   </div>
                   <DocumentPreview filename={selectedPreview?.[0]} content={selectedPreview?.[1]} />
                 </section>
+                <details className="result-support-details">
+                  <summary>
+                    <span><strong>核对文件结构与恢复路径</strong><small>{Object.keys(primaryDocs).length + 2} 个导出文件 · {workflow.rules.recoveryOrder.length} 步读取路径</small></span>
+                    <span className="details-action">展开核对</span>
+                  </summary>
+                  <div className="result-support-grid">
+                  <section className="result-support-section">
+                    <h3>文件树</h3>
+                  <ul className="file-list">
+                    <li><code>workflow.json</code><span>结构化事实源，可重新导入。</span></li>
+                    <li><code>README.md</code><span>说明如何使用导出包。</span></li>
+                    {Object.keys(primaryDocs).map((filename) => {
+                      const source = workflow.documents.find((document) => document.filename === filename || (document.role !== 'protocol' && filename.replace(/\.html$/i, '') === document.filename.replace(/\.(html|md)$/i, '')))
+                      const fieldCount = source?.sections.reduce((total, section) => total + section.fields.length, 0) ?? 0
+                      const sectionNames = source?.sections.map((section) => section.title).filter(Boolean) ?? []
+                      return (
+                        <li key={filename}>
+                          <code>documents/{filename}</code>
+                          <span>{source?.title || '未命名文档'} · {sectionNames.length} 个章节、{fieldCount} 个字段</span>
+                          {sectionNames.length > 0 ? <small>章节：{sectionNames.join('、')}</small> : <small>暂未添加章节</small>}
+                        </li>
+                      )
+                    })}
+                    </ul>
+                  </section>
+                  <section className="result-support-section">
+                    <h3>恢复读取路径</h3>
+                    <ol className="read-order-list">
+                    {workflow.rules.recoveryOrder.map((stepItem, index) => {
+                      const document = workflow.documents.find((item) => item.id === stepItem.documentId)
+                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document ? projectDocumentFilename(document, 'html') : '未知文档'}</strong><small>{stepItem.condition}</small></li>
+                    })}
+                    </ol>
+                  </section>
+                  </div>
+                </details>
               </div>
               {blockingErrors.length > 0 ? (
                 <section className="inline-issues" aria-live="polite">

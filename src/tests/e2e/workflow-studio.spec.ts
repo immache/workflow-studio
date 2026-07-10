@@ -358,6 +358,12 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
 
   await page.getByRole('button', { name: '查看结果预览' }).click()
   await expect(page.getByRole('heading', { name: /结果预览.*文件树.*模块分布.*恢复路径/ })).toBeVisible()
+  const previewGrid = page.locator('.result-preview-grid')
+  await expect(previewGrid.locator(':scope > *').first()).toHaveClass(/result-preview-primary/)
+  const structureDetails = page.locator('.result-support-details')
+  await expect(structureDetails).not.toHaveAttribute('open', '')
+  await structureDetails.locator('summary').click()
+  await expect(structureDetails).toHaveAttribute('open', '')
   await expect(page.getByText('documents/AGENTS.md')).toBeVisible()
   await expect(page.getByText('documents/CONTEXT.html')).toBeVisible()
   const statusFile = page.locator('.result-preview-grid .file-list li').filter({ hasText: 'documents/STATUS.html' })
