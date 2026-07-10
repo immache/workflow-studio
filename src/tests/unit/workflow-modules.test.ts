@@ -7,6 +7,8 @@ import {
 } from '../../data/modules/standard-workflow-modules'
 import { createWorkflowZip } from '../../domain/export-zip'
 import { exportReadme } from '../../domain/export-markdown'
+import { fieldValueToText } from '../../domain/schema'
+import { simulateRecovery } from '../../domain/simulation'
 import { validateWorkflow } from '../../domain/validation'
 
 describe('Workflow Studio modular builder', () => {
@@ -61,18 +63,31 @@ describe('Workflow Studio modular builder', () => {
   })
 
   it('allows STATUS.html to be omitted for a static workflow', () => {
+    const firstAction = '读取入口协议后核对稳定计划。'
     const workflow = createModularWorkflow({
       name: '静态工作流',
       description: '只保存稳定计划。',
       selectedDocumentIds: ['spec'],
-      firstAction: '读取入口协议。',
+      firstAction,
       recoveryRisk: '无实时状态。',
     })
+    const fallbackField = workflow.documents
+      .find((document) => document.role === 'protocol')
+      ?.sections.flatMap((section) => section.fields)
+      .find((field) => field.id === 'protocol-fallback-next-atomic-step')
+    if (!fallbackField) throw new Error('missing protocol fallback fixture')
+    const simulation = simulateRecovery(workflow, 'new-session')
 
     expect(workflow.documents.map((document) => document.filename)).toEqual(['AGENTS.md', 'SPEC.html'])
+    expect(fieldValueToText(fallbackField.value)).toBe(firstAction)
     expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
       expect.objectContaining({ ruleId: 'recovery-realtime-status', severity: 'warning' }),
     ]))
+    expect(simulation).toMatchObject({
+      status: 'risky',
+      nextAtomicStep: firstAction,
+      readDocuments: ['AGENTS.md', 'SPEC.html'],
+    })
   })
 
   it('copies section and field modules into ordinary schema objects', () => {

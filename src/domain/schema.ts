@@ -277,6 +277,8 @@ export type SimulationScenario =
   | 'goal-conflict'
   | 'missing-preference'
   | 'unclear-term'
+  | 'stale-status'
+  | 'insufficient-history'
   | 'unclear-work-entry'
   | 'handoff-after-failure'
 

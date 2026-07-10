@@ -7,7 +7,7 @@ import { exportMarkdownDocuments, exportReadme } from '../../domain/export-markd
 import { createWorkflowZip, packageName } from '../../domain/export-zip'
 import { parseImportedWorkflow, parseWorkflowJson } from '../../domain/import-export'
 import { scoreWorkflow } from '../../domain/scoring'
-import { fieldValueToText, scalarValue, SCHEMA_VERSION } from '../../domain/schema'
+import { fieldValueToText, scalarValue, SCHEMA_VERSION, type WorkflowSchema } from '../../domain/schema'
 import { simulateRecovery } from '../../domain/simulation'
 import { validateWorkflow, warningSchemaHash } from '../../domain/validation'
 import { useWorkflowStore } from '../../store/workflow-store'
@@ -19,6 +19,60 @@ async function zipFile(entries: Record<string, string>): Promise<File> {
   }
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
   return new File([blob], 'workflow.zip', { type: 'application/zip' })
+}
+
+function addStructuredFilenameReferences(workflow: WorkflowSchema, filename: string): void {
+  const document = workflow.documents.find((candidate) => candidate.id === 'status')
+  const section = document?.sections[0]
+  const field = section?.fields[0]
+  const recoveryStep = workflow.rules.recoveryOrder.find((step) => step.documentId === 'agents')
+  const sourceRule = workflow.rules.sourcePriority[0]
+  const source = sourceRule?.orderedSources.find((candidate) => !candidate.documentId)
+  const updateTrigger = workflow.rules.updateTriggers.find((trigger) => trigger.targetDocumentId === 'status')
+  const completionCheck = workflow.rules.completionChecks[0]
+  if (!document || !section || !field || !recoveryStep || !sourceRule || !source || !updateTrigger || !completionCheck) {
+    throw new Error('missing structured filename reference fixture')
+  }
+
+  workflow.name = `${filename} 工作流`
+  workflow.description = `${filename} 工作流说明`
+  recoveryStep.condition = `${filename} 恢复规则`
+  sourceRule.reason = `${filename} 来源规则`
+  source.label = `${filename} 来源标签`
+  updateTrigger.trigger = `${filename} 更新条件`
+  updateTrigger.requiredAction = `${filename} 更新动作`
+  completionCheck.label = `${filename} 完成检查`
+  completionCheck.description = `${filename} 完成说明`
+  document.title = `${filename} 状态标题`
+  document.description = `${filename} 文档说明`
+  document.readPolicy.whenToRead = [`${filename} 读取说明`]
+  document.readPolicy.skipWhen = [`${filename} 跳过说明`]
+  document.updatePolicy.updateTriggers = [`${filename} 文档更新条件`]
+  document.updatePolicy.ownerHint = `${filename} 维护说明`
+  section.title = `${filename} 章节标题`
+  section.purpose = `${filename} 章节说明`
+  field.label = `${filename} 字段标题`
+  field.guidance = `${filename} 字段说明`
+  field.defaultValue = `${filename} 默认值`
+  field.value = {
+    kind: 'list',
+    value: [
+      scalarValue(`${filename} 字段值`),
+      { kind: 'table', columns: ['reference'], rows: [{ reference: `${filename} 表格值` }] },
+    ],
+  }
+  field.options = [{
+    value: `${filename} 选项值`,
+    label: `${filename} 选项标题`,
+    description: `${filename} 选项说明`,
+  }]
+  field.validation.allowedValues = [`${filename} 允许值`]
+  field.validation.customRules = [{
+    id: 'filename-reference',
+    description: `${filename} 校验说明`,
+    severity: 'warning',
+    predicate: 'non-empty',
+  }]
 }
 
 describe('Workflow Studio domain model', () => {
@@ -107,6 +161,78 @@ describe('Workflow Studio domain model', () => {
     }
   })
 
+  it('rewrites every structured filename reference when the store renames a document', async () => {
+    await useWorkflowStore.getState().createPresetProject()
+    const before = useWorkflowStore.getState().workflow
+    const renamedDocument = before.documents.find((document) => document.id === 'spec')
+    if (!renamedDocument) throw new Error('missing plan document fixture')
+    const previousFilename = renamedDocument.filename
+    const nextFilename = 'PLAN.html'
+    addStructuredFilenameReferences(before, previousFilename)
+
+    useWorkflowStore.getState().updateDocument(renamedDocument.id, { filename: nextFilename })
+    const workflow = useWorkflowStore.getState().workflow
+    const status = workflow.documents.find((document) => document.id === 'status')
+    const section = status?.sections[0]
+    const field = section?.fields[0]
+    if (!status || !section || !field) throw new Error('missing renamed reference fixture')
+
+    expect(workflow.documents.find((document) => document.id === renamedDocument.id)?.filename).toBe(nextFilename)
+    expect(workflow.name).toBe(`${nextFilename} 工作流`)
+    expect(workflow.description).toBe(`${nextFilename} 工作流说明`)
+    expect(status).toMatchObject({
+      title: `${nextFilename} 状态标题`,
+      description: `${nextFilename} 文档说明`,
+      readPolicy: {
+        whenToRead: [`${nextFilename} 读取说明`],
+        skipWhen: [`${nextFilename} 跳过说明`],
+      },
+      updatePolicy: {
+        updateTriggers: [`${nextFilename} 文档更新条件`],
+        ownerHint: `${nextFilename} 维护说明`,
+      },
+    })
+    expect(section).toMatchObject({
+      title: `${nextFilename} 章节标题`,
+      purpose: `${nextFilename} 章节说明`,
+    })
+    expect(field).toMatchObject({
+      label: `${nextFilename} 字段标题`,
+      guidance: `${nextFilename} 字段说明`,
+      defaultValue: `${nextFilename} 默认值`,
+      options: [{
+        value: `${nextFilename} 选项值`,
+        label: `${nextFilename} 选项标题`,
+        description: `${nextFilename} 选项说明`,
+      }],
+      validation: {
+        allowedValues: [`${nextFilename} 允许值`],
+        customRules: [expect.objectContaining({ description: `${nextFilename} 校验说明` })],
+      },
+    })
+    expect(field.value).toEqual({
+      kind: 'list',
+      value: [
+        scalarValue(`${nextFilename} 字段值`),
+        { kind: 'table', columns: ['reference'], rows: [{ reference: `${nextFilename} 表格值` }] },
+      ],
+    })
+    expect(workflow.rules.recoveryOrder.find((step) => step.documentId === 'agents')?.condition).toBe(`${nextFilename} 恢复规则`)
+    expect(workflow.rules.sourcePriority[0]).toMatchObject({
+      reason: `${nextFilename} 来源规则`,
+      orderedSources: expect.arrayContaining([expect.objectContaining({ label: `${nextFilename} 来源标签` })]),
+    })
+    expect(workflow.rules.updateTriggers.find((trigger) => trigger.targetDocumentId === 'status')).toMatchObject({
+      trigger: `${nextFilename} 更新条件`,
+      requiredAction: `${nextFilename} 更新动作`,
+    })
+    expect(workflow.rules.completionChecks[0]).toMatchObject({
+      label: `${nextFilename} 完成检查`,
+      description: `${nextFilename} 完成说明`,
+    })
+    expect(JSON.stringify(workflow)).not.toContain(previousFilename)
+  })
+
   it('cleans structured and field-value references when the store removes a document', async () => {
     await useWorkflowStore.getState().createPresetProject()
     const before = useWorkflowStore.getState().workflow
@@ -116,6 +242,7 @@ describe('Workflow Studio domain model', () => {
     const removedField = removedSection.fields[0]
     const status = before.documents.find((document) => document.id === 'status')
     if (!status) throw new Error('missing status fixture')
+    addStructuredFilenameReferences(before, removed.filename)
     before.rules.sourcePriority.push({
       id: 'field-source-reference',
       scope: 'field',
@@ -131,14 +258,15 @@ describe('Workflow Studio domain model', () => {
       acceptedAt: new Date().toISOString(),
       schemaHash: 'test',
     })
-    status.description = `当前状态依赖 ${removed.filename}`
-    status.sections[0].purpose = `与 ${removed.filename} 对照。`
-    status.sections[0].fields[0].guidance = `不要复制 ${removed.filename}。`
     expect(before.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(true)
     expect(before.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(true)
 
     useWorkflowStore.getState().removeDocument(removed.id)
     const workflow = useWorkflowStore.getState().workflow
+    const survivingStatus = workflow.documents.find((document) => document.id === status.id)
+    const survivingSection = survivingStatus?.sections[0]
+    const survivingField = survivingSection?.fields[0]
+    if (!survivingStatus || !survivingSection || !survivingField) throw new Error('missing surviving reference fixture')
 
     expect(workflow.documents.some((document) => document.id === removed.id)).toBe(false)
     expect(workflow.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(false)
@@ -148,7 +276,43 @@ describe('Workflow Studio domain model', () => {
     expect(workflow.rules.completionChecks.some((check) => check.relatedDocumentIds.includes(removed.id))).toBe(false)
     expect(workflow.documents.some((document) => document.readPolicy.dependsOnDocumentIds.includes(removed.id))).toBe(false)
     expect(workflow.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(false)
-    expect(JSON.stringify(workflow.documents)).not.toContain(removed.filename)
+    expect(workflow.name).toBe('工作流')
+    expect(workflow.description).toBe('工作流说明')
+    expect(survivingStatus).toMatchObject({
+      title: '状态标题',
+      description: '文档说明',
+      readPolicy: { whenToRead: ['读取说明'], skipWhen: ['跳过说明'] },
+      updatePolicy: { updateTriggers: ['文档更新条件'], ownerHint: '维护说明' },
+    })
+    expect(survivingSection).toMatchObject({ title: '章节标题', purpose: '章节说明' })
+    expect(survivingField).toMatchObject({
+      label: '字段标题',
+      guidance: '字段说明',
+      defaultValue: '默认值',
+      options: [{ value: '选项值', label: '选项标题', description: '选项说明' }],
+      validation: {
+        allowedValues: ['允许值'],
+        customRules: [expect.objectContaining({ description: '校验说明' })],
+      },
+    })
+    expect(survivingField.value).toEqual({
+      kind: 'list',
+      value: [
+        scalarValue('字段值'),
+        { kind: 'table', columns: ['reference'], rows: [{ reference: '表格值' }] },
+      ],
+    })
+    expect(workflow.rules.recoveryOrder.find((step) => step.documentId === 'agents')?.condition).toBe('恢复规则')
+    expect(workflow.rules.sourcePriority[0]).toMatchObject({
+      reason: '来源规则',
+      orderedSources: expect.arrayContaining([expect.objectContaining({ label: '来源标签' })]),
+    })
+    expect(workflow.rules.updateTriggers.find((trigger) => trigger.targetDocumentId === 'status')).toMatchObject({
+      trigger: '更新条件',
+      requiredAction: '更新动作',
+    })
+    expect(workflow.rules.completionChecks[0]).toMatchObject({ label: '完成检查', description: '完成说明' })
+    expect(JSON.stringify(workflow)).not.toContain(removed.filename)
     expect(workflow.acceptedWarnings.some((warning) => warning.target.fieldId === removedField.id || warning.target.sectionId === removedSection.id)).toBe(false)
   })
 
@@ -166,6 +330,23 @@ describe('Workflow Studio domain model', () => {
     expect(result.status).toBe('pass')
     expect(result.readDocuments).toContain('AGENTS.md')
     expect(result.nextAtomicStep).toBe('运行领域回归测试并检查结果。')
+  })
+
+  it('reads optional recovery documents only for the scenario that needs them', () => {
+    const workflow = createCurrentStandardWorkflow()
+
+    const newSession = simulateRecovery(workflow, 'new-session')
+    const unclearTerm = simulateRecovery(workflow, 'unclear-term')
+    const insufficientHistory = simulateRecovery(workflow, 'insufficient-history')
+
+    expect(newSession.readDocuments).toEqual(['AGENTS.md', 'STATUS.html', 'SPEC.html'])
+    expect(newSession.steps.filter((step) => step.outcome === 'skip').map((step) => step.action)).toEqual([
+      '按需跳过 USER.html',
+      '按需跳过 MEMORY.html',
+      '按需跳过 CONTEXT.html',
+    ])
+    expect(unclearTerm.readDocuments).toEqual(['AGENTS.md', 'STATUS.html', 'SPEC.html', 'CONTEXT.html'])
+    expect(insufficientHistory.readDocuments).toEqual(['AGENTS.md', 'STATUS.html', 'SPEC.html', 'MEMORY.html'])
   })
 
   it('reports source conflicts with selected source details', () => {
@@ -257,6 +438,45 @@ describe('Workflow Studio domain model', () => {
     expect(imported.documents.map((document) => document.filename)).toContain('STATUS.html')
   })
 
+  it('rejects duplicate IDs in every imported rule collection', async () => {
+    const cases: Array<{ name: string; duplicate: (workflow: WorkflowSchema) => void }> = [
+      {
+        name: 'recoveryOrder',
+        duplicate: (workflow) => {
+          workflow.rules.recoveryOrder[1].id = workflow.rules.recoveryOrder[0].id
+        },
+      },
+      {
+        name: 'sourcePriority',
+        duplicate: (workflow) => {
+          const rule = workflow.rules.sourcePriority[0]
+          workflow.rules.sourcePriority.push({ ...rule, orderedSources: rule.orderedSources.map((source) => ({ ...source })) })
+        },
+      },
+      {
+        name: 'updateTriggers',
+        duplicate: (workflow) => {
+          workflow.rules.updateTriggers[1].id = workflow.rules.updateTriggers[0].id
+        },
+      },
+      {
+        name: 'completionChecks',
+        duplicate: (workflow) => {
+          workflow.rules.completionChecks[1].id = workflow.rules.completionChecks[0].id
+        },
+      },
+    ]
+
+    for (const testCase of cases) {
+      const workflow = createCurrentStandardWorkflow()
+      testCase.duplicate(workflow)
+      await expect(
+        parseWorkflowJson(JSON.stringify(workflow)),
+        `${testCase.name} should reject duplicate rule IDs`,
+      ).rejects.toThrow(/导入校验失败：ID 重复/)
+    }
+  })
+
   it('rejects table rows with undeclared keys or non-string cells', async () => {
     const workflow = createCurrentStandardWorkflow()
     const field = workflow.documents[1].sections[0].fields[0]
@@ -328,6 +548,31 @@ describe('Workflow Studio domain model', () => {
       expect.objectContaining({ ruleId: 'recovery-protocol-first', severity: 'error' }),
     ]))
     expect(simulateRecovery(workflow, 'new-session').status).toBe('blocked')
+  })
+
+  it.each([
+    ['STATUS.html', 'status', 'remove'],
+    ['STATUS.html', 'status', 'optional'],
+    ['SPEC.html', 'spec', 'remove'],
+    ['SPEC.html', 'spec', 'optional'],
+  ] as const)('blocks ZIP export when %s (%s) is %s in recovery order', async (_filename, documentId, mode) => {
+    const workflow = createCurrentStandardWorkflow()
+    if (mode === 'remove') {
+      workflow.rules.recoveryOrder = workflow.rules.recoveryOrder.filter((step) => step.documentId !== documentId)
+    } else {
+      const step = workflow.rules.recoveryOrder.find((candidate) => candidate.documentId === documentId)
+      if (!step) throw new Error('missing required recovery step fixture')
+      step.required = false
+    }
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ruleId: 'recovery-required-document-order',
+        severity: 'error',
+        target: expect.objectContaining({ documentId }),
+      }),
+    ]))
+    await expect(createWorkflowZip(workflow)).rejects.toThrow(/导出被阻止：必读文档未进入恢复路径/)
   })
 
   it('marks recovery as risky when the optional status entry is missing', () => {

@@ -6,6 +6,7 @@ const recoveryBlockingRules = new Set([
   'recovery-protocol-entry',
   'recovery-protocol-first',
   'recovery-realtime-status',
+  'recovery-required-document-order',
   'recovery-next-atomic-step-present',
   'recovery-next-atomic-step-value',
 ])
@@ -16,15 +17,19 @@ const scenarioLabels: Record<SimulationScenario, string> = {
   'goal-conflict': '目标冲突',
   'missing-preference': '用户偏好缺失',
   'unclear-term': '术语不清楚',
+  'stale-status': '状态过期',
+  'insufficient-history': '历史不足',
   'unclear-work-entry': '工具或工作入口不明确',
   'handoff-after-failure': '失败后交接',
 }
 
 export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationScenario): SimulationResult {
   const documentById = new Map(workflow.documents.map((document) => [document.id, document]))
+  const hasRealtimeStatus = workflow.documents.some((document) => document.role === 'status' && document.lifecycle === 'realtime')
   const steps: SimulationStep[] = []
   const blockers: string[] = []
   const readDocuments: string[] = []
+  const readDocumentIds = new Set<string>()
   const conflicts: SimulatedConflict[] = []
   const recoveryIssues = validateWorkflow(workflow).filter((issue) => issue.severity === 'error' && recoveryBlockingRules.has(issue.ruleId))
 
@@ -50,7 +55,11 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
       })
       return
     }
-    const shouldRead = recoveryStep.required || scenario === 'new-session' || scenario === 'context-compaction'
+    const shouldRead = recoveryStep.required || (
+      (document.role === 'preference' && scenario === 'missing-preference') ||
+      (document.role === 'context' && scenario === 'unclear-term') ||
+      (document.role === 'history' && (scenario === 'insufficient-history' || scenario === 'handoff-after-failure'))
+    )
     steps.push({
       order: steps.length + 1,
       action: shouldRead ? `读取 ${document.filename}` : `按需跳过 ${document.filename}`,
@@ -58,7 +67,10 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
       reason: recoveryStep.condition,
       outcome: shouldRead ? 'read' : 'skip',
     })
-    if (shouldRead) readDocuments.push(document.filename)
+    if (shouldRead) {
+      readDocuments.push(document.filename)
+      readDocumentIds.add(document.id)
+    }
   })
 
   if (scenario === 'goal-conflict') {
@@ -93,6 +105,33 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
   if (scenario === 'unclear-term' && !workflow.documents.some((document) => document.role === 'context')) {
     blockers.push('没有术语解释文档，术语不清楚时需要询问用户。')
   }
+  if (scenario === 'insufficient-history' && !workflow.documents.some((document) => document.role === 'history')) {
+    blockers.push('没有历史文档，历史证据不足时需要检查工作区或询问用户。')
+  }
+  if (scenario === 'stale-status') {
+    const statusDocument = workflow.documents.find((document) => document.role === 'status' && document.lifecycle === 'realtime')
+    if (!statusDocument) {
+      blockers.push('没有实时状态文档，无法核对状态是否过期。')
+    } else {
+      const sourceRule = workflow.rules.sourcePriority[0]
+      const workspaceSource = sourceRule?.orderedSources.find((source) => source.sourceType === 'workspace-fact')
+      steps.push({
+        order: steps.length + 1,
+        action: `核对 ${statusDocument.filename} 与新鲜工作区事实`,
+        documentId: statusDocument.id,
+        reason: '状态可能已经过期，不能直接沿用旧事实。',
+        outcome: 'conflict',
+      })
+      conflicts.push({
+        id: 'stale-status-workspace-fact',
+        description: '模拟实时状态与新鲜工作区事实不一致。',
+        competingSources: sourceRule?.orderedSources ?? [],
+        selectedSource: workspaceSource,
+        resolution: workspaceSource ? 'resolved' : 'manual-review-required',
+        reason: workspaceSource ? '状态过期时优先采用新鲜工作区事实。' : '缺少工作区事实来源，需要人工确认。',
+      })
+    }
+  }
   if (scenario === 'missing-preference' && !workflow.documents.some((document) => document.role === 'preference')) {
     blockers.push('没有用户偏好文档，不能恢复长期偏好。')
   }
@@ -100,7 +139,10 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
     blockers.push('没有工作入口字段，恢复时可能误填根目录。')
   }
 
-  const nextAtomicStep = resolveNextAtomicStep(workflow).value
+  const nextAtomicStep = resolveNextAtomicStep(workflow, readDocumentIds).value
+  if (!nextAtomicStep && hasRealtimeStatus) {
+    blockers.push('本次实际读取的文档中没有可执行的下一原子步骤。')
+  }
   steps.push({
     order: steps.length + 1,
     action: '推导下一原子步骤',
@@ -110,7 +152,7 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
 
   return {
     scenario,
-    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') || !nextAtomicStep ? 'risky' : 'pass',
+    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') || !hasRealtimeStatus || !nextAtomicStep ? 'risky' : 'pass',
     steps,
     readDocuments,
     conflicts,

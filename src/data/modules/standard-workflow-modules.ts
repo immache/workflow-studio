@@ -543,7 +543,7 @@ export function createRulesForDocuments(documents: WorkflowDocument[]): Workflow
   }
 }
 
-export function createProtocolDraftDocument(documents: WorkflowDocument[], order = 1): WorkflowDocument {
+export function createProtocolDraftDocument(documents: WorkflowDocument[], order = 1, fallbackNextAction = ''): WorkflowDocument {
   const readableDocs = documents
     .map((documentItem, index) => `${index + 1}. ${documentItem.filename}：${documentItem.description}`)
     .join('\n')
@@ -563,6 +563,26 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
     .map((documentItem) => `${documentItem.filename}：${documentItem.updatePolicy.updateTriggers.join('；')}；${documentItem.updatePolicy.replacementMode === 'append-history' ? '追加历史条目' : '替换失效信息'}。`)
     .join('\n')
   const completionChecks = completionChecksForDocuments(documents).map((check) => `- ${check.label}：${check.description}`).join('\n')
+  const recoveryFields = [
+    createField({
+      id: 'protocol-recovery-order',
+      label: '恢复读取顺序',
+      guidance: '入口协议必须第一步读取；其他文档按职责和需要读取。',
+      lifecycle: 'validation',
+      required: true,
+      value: scalarValue(recoveryOrder),
+    }),
+  ]
+  if (!documents.some((documentItem) => documentItem.role === 'status')) {
+    recoveryFields.push(createField({
+      id: 'protocol-fallback-next-atomic-step',
+      label: '无状态文档时的接续动作',
+      guidance: '未启用状态文档时，在这里保留恢复后可以立刻执行的唯一动作；修改用途答案后重新生成协议草案。',
+      lifecycle: 'validation',
+      required: true,
+      value: scalarValue(fallbackNextAction.trim() || '先核对当前工作区事实，再执行计划中的第一项未完成工作。'),
+    }))
+  }
 
   return document({
     id: 'agents',
@@ -583,16 +603,7 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
           value: scalarValue(readableDocs),
         }),
       ]),
-      section('protocol-read-order', '读取顺序', '说明未来模型恢复时先读什么、再读什么。', 'validation', 2, [
-        createField({
-          id: 'protocol-recovery-order',
-          label: '恢复读取顺序',
-          guidance: '入口协议必须第一步读取；其他文档按职责和需要读取。',
-          lifecycle: 'validation',
-          required: true,
-          value: scalarValue(recoveryOrder),
-        }),
-      ]),
+      section('protocol-read-order', '读取顺序', '说明未来模型恢复时先读什么、再读什么。', 'validation', 2, recoveryFields),
       section('protocol-source-priority', '来源优先级', '说明冲突时优先相信谁。', 'validation', 3, [
         createField({
           id: 'protocol-source-priority-field',
@@ -637,7 +648,7 @@ export function createModularWorkflow(input: ModularWorkflowInput): WorkflowSche
   if (currentGoal) currentGoal.value = scalarValue(input.name.trim() || '继续完善当前项目。')
   if (nextStep) nextStep.value = scalarValue(input.firstAction.trim() || '读取 STATUS.html，确认下一原子步骤。')
 
-  const protocol = createProtocolDraftDocument(contentDocuments, 1)
+  const protocol = createProtocolDraftDocument(contentDocuments, 1, input.firstAction)
   const documents = [protocol, ...contentDocuments].map((documentItem, index) => ({
     ...documentItem,
     order: index + 1,

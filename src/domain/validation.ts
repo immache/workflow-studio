@@ -205,6 +205,10 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
       document.id,
       ...document.sections.flatMap((section) => [section.id, ...section.fields.map((field) => field.id)]),
     ]),
+    ...workflow.rules.recoveryOrder.map((step) => step.id),
+    ...workflow.rules.sourcePriority.map((rule) => rule.id),
+    ...workflow.rules.updateTriggers.map((trigger) => trigger.id),
+    ...workflow.rules.completionChecks.map((check) => check.id),
   ]
   const entityIdSet = new Set(entityIds)
   for (const id of duplicateValues(entityIds)) {
@@ -374,6 +378,20 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
           ruleId: 'recovery-valid-fallback-references',
         }),
       )
+    }
+  }
+
+  const recoveryStepByDocumentId = new Map(workflow.rules.recoveryOrder.map((step) => [step.documentId, step]))
+  for (const document of workflow.documents.filter((candidate) => candidate.role === 'status' || candidate.role === 'plan')) {
+    const recoveryStep = recoveryStepByDocumentId.get(document.id)
+    if (!recoveryStep || !recoveryStep.required) {
+      issues.push(issue({
+        severity: 'error',
+        title: '必读文档未进入恢复路径',
+        message: `${document.filename} 承担${document.role === 'status' ? '实时状态和下一步' : '长期计划和范围'}职责，必须作为必读项进入恢复顺序。`,
+        target: { documentId: document.id, ruleId: recoveryStep?.id },
+        ruleId: 'recovery-required-document-order',
+      }))
     }
   }
 
