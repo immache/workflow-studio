@@ -184,8 +184,8 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "expectedSelector": "#export-title",
-    "expectedHash": "#advanced",
-    "actualHash": "#advanced",
+    "expectedHash": "#advanced/export",
+    "actualHash": "#advanced/export",
     "expectedElementVisible": true,
     "additionalSelectorsVisible": true,
     "expectedStep": null,
@@ -258,10 +258,10 @@
     "activeStepNumber": "1",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 48,
-      "right": 190,
-      "top": 485.828125,
-      "bottom": 534.828125
+      "left": 20,
+      "right": 170,
+      "top": 418.484375,
+      "bottom": 467.484375
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -285,10 +285,10 @@
     "activeStepNumber": "2",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 198,
-      "right": 340,
-      "top": 280.703125,
-      "bottom": 329.703125
+      "left": 178,
+      "right": 328,
+      "top": 262.3125,
+      "bottom": 311.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -312,10 +312,10 @@
     "activeStepNumber": "3",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 348,
-      "right": 490,
-      "top": 280.703125,
-      "bottom": 329.703125
+      "left": 336,
+      "right": 486,
+      "top": 262.3125,
+      "bottom": 311.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -339,10 +339,10 @@
     "activeStepNumber": "4",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 498,
-      "right": 640,
-      "top": 280.703125,
-      "bottom": 329.703125
+      "left": 494,
+      "right": 644,
+      "top": 262.3125,
+      "bottom": 311.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -366,10 +366,10 @@
     "activeStepNumber": "5",
     "activeStepFullyVisible": true,
     "activeStepRect": {
-      "left": 648,
-      "right": 790,
-      "top": 280.703125,
-      "bottom": 329.703125
+      "left": 652,
+      "right": 802,
+      "top": 262.3125,
+      "bottom": 311.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -385,8 +385,8 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "expectedSelector": "#export-title",
-    "expectedHash": "#advanced",
-    "actualHash": "#advanced",
+    "expectedHash": "#advanced/export",
+    "actualHash": "#advanced/export",
     "expectedElementVisible": true,
     "additionalSelectorsVisible": true,
     "expectedStep": null,
@@ -461,8 +461,8 @@
     "activeStepRect": {
       "left": 16,
       "right": 148,
-      "top": 369.3125,
-      "bottom": 418.3125
+      "top": 379.3125,
+      "bottom": 428.3125
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -488,8 +488,8 @@
     "activeStepRect": {
       "left": 114,
       "right": 246,
-      "top": 190.546875,
-      "bottom": 239.546875
+      "top": 200.546875,
+      "bottom": 249.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -515,8 +515,8 @@
     "activeStepRect": {
       "left": 114,
       "right": 246,
-      "top": 190.546875,
-      "bottom": 239.546875
+      "top": 200.546875,
+      "bottom": 249.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -542,8 +542,8 @@
     "activeStepRect": {
       "left": 114,
       "right": 246,
-      "top": 190.546875,
-      "bottom": 239.546875
+      "top": 200.546875,
+      "bottom": 249.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -569,8 +569,8 @@
     "activeStepRect": {
       "left": 114,
       "right": 246,
-      "top": 190.546875,
-      "bottom": 239.546875
+      "top": 200.546875,
+      "bottom": 249.546875
     },
     "pageStateCorrect": true,
     "onboardingRawTerms": [],
@@ -586,8 +586,8 @@
     "scrollY": 0,
     "horizontalOverflow": 0,
     "expectedSelector": "#export-title",
-    "expectedHash": "#advanced",
-    "actualHash": "#advanced",
+    "expectedHash": "#advanced/export",
+    "actualHash": "#advanced/export",
     "expectedElementVisible": true,
     "additionalSelectorsVisible": true,
     "expectedStep": null,

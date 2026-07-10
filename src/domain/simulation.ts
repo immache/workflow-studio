@@ -1,4 +1,5 @@
-import { fieldValueToText, type SimulatedConflict, type SimulationResult, type SimulationScenario, type SimulationStep, type WorkflowSchema } from './schema'
+import { type SimulatedConflict, type SimulationResult, type SimulationScenario, type SimulationStep, type WorkflowSchema } from './schema'
+import { resolveNextAtomicStep } from './recovery-semantics'
 import { validateWorkflow } from './validation'
 
 const recoveryBlockingRules = new Set([
@@ -17,24 +18,6 @@ const scenarioLabels: Record<SimulationScenario, string> = {
   'unclear-term': '术语不清楚',
   'unclear-work-entry': '工具或工作入口不明确',
   'handoff-after-failure': '失败后交接',
-}
-
-function currentNextAtomicStep(workflow: WorkflowSchema): string | undefined {
-  const recoveryDocumentIds = workflow.rules.recoveryOrder.map((step) => step.documentId)
-  const orderedDocumentIds = [...recoveryDocumentIds, ...workflow.documents.map((document) => document.id)]
-  const visited = new Set<string>()
-
-  for (const documentId of orderedDocumentIds) {
-    if (visited.has(documentId)) continue
-    visited.add(documentId)
-    const document = workflow.documents.find((candidate) => candidate.id === documentId)
-    const field = document?.sections
-      .flatMap((section) => section.fields)
-      .find((candidate) => candidate.id.includes('next-atomic-step') && fieldValueToText(candidate.value).trim().length > 0)
-    if (field) return fieldValueToText(field.value).trim()
-  }
-
-  return undefined
 }
 
 export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationScenario): SimulationResult {
@@ -117,7 +100,7 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
     blockers.push('没有工作入口字段，恢复时可能误填根目录。')
   }
 
-  const nextAtomicStep = currentNextAtomicStep(workflow)
+  const nextAtomicStep = resolveNextAtomicStep(workflow).value
   steps.push({
     order: steps.length + 1,
     action: '推导下一原子步骤',
@@ -127,7 +110,7 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
 
   return {
     scenario,
-    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') ? 'risky' : 'pass',
+    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') || !nextAtomicStep ? 'risky' : 'pass',
     steps,
     readDocuments,
     conflicts,

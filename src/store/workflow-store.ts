@@ -110,7 +110,7 @@ type WorkflowStore = {
   updateCompletionCheck: (id: string, patch: Partial<Pick<CompletionCheck, 'label' | 'description' | 'severityWhenMissing'>>) => void
   addCompletionCheck: () => void
   removeCompletionCheck: (id: string) => void
-  refreshProtocolDraft: () => void
+  refreshProtocolDraft: (options?: { replaceProtocol?: boolean; replaceRules?: boolean }) => void
   updateConflictPolicy: (patch: Partial<ConflictPolicy>) => void
   updateHistoryPolicy: (patch: Partial<HistoryPolicy>) => void
   setSimulationScenario: (scenario: SimulationScenario) => void
@@ -260,49 +260,92 @@ function cloneSection(section: WorkflowSection, order: number): WorkflowSection 
   }
 }
 
-function removeFilenameFromValue(value: FieldValue, filename: string, documentId: string): FieldValue {
-  if (value.kind === 'reference') return value.targetId === documentId ? { kind: 'empty' } : value
+function removeFilenameFromText(text: string, filename: string): string {
+  if (!text.includes(filename)) return text
+  if (text.includes('\n')) return text.split(/\r?\n/).filter((line) => !line.includes(filename)).join('\n').trim()
+  if (text.includes('->')) return text.split(/\s*->\s*/).filter((item) => !item.includes(filename)).join(' -> ').trim()
+  return text.replaceAll(filename, '').replace(/\s{2,}/g, ' ').trim()
+}
+
+function removeFilenameFromValue(value: FieldValue, filename: string, removedTargetIds: Set<string>): FieldValue {
+  if (value.kind === 'reference') return removedTargetIds.has(value.targetId) ? { kind: 'empty' } : value
   if (value.kind === 'list') {
-    const items = value.value.map((item) => removeFilenameFromValue(item, filename, documentId)).filter((item) => fieldValueToText(item).trim().length > 0)
+    const items = value.value.map((item) => removeFilenameFromValue(item, filename, removedTargetIds)).filter((item) => fieldValueToText(item).trim().length > 0)
     return { kind: 'list', value: items }
   }
   if (value.kind === 'table') {
-    return { ...value, rows: value.rows.filter((row) => !Object.values(row).some((cell) => cell.includes(filename))) }
+    const rows = value.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, cell]) => [
+      key,
+      typeof cell === 'string' ? removeFilenameFromText(cell, filename) : '',
+    ]))).filter((row) => Object.values(row).some((cell) => cell.trim().length > 0))
+    return { ...value, rows }
   }
   if (value.kind !== 'scalar' || typeof value.value !== 'string' || !value.value.includes(filename)) return value
-  const text = value.value
-  if (text.includes('\n')) {
-    const remaining = text.split(/\r?\n/).filter((line) => !line.includes(filename)).join('\n').trim()
-    return remaining ? scalarValue(remaining) : { kind: 'empty' }
-  }
-  if (text.includes('->')) {
-    const remaining = text.split(/\s*->\s*/).filter((item) => !item.includes(filename)).join(' -> ').trim()
-    return remaining ? scalarValue(remaining) : { kind: 'empty' }
-  }
-  const remaining = text.replaceAll(filename, '').replace(/\s{2,}/g, ' ').trim()
+  const remaining = removeFilenameFromText(value.value, filename)
   return remaining ? scalarValue(remaining) : { kind: 'empty' }
 }
 
-function removeDocumentReferences(workflow: Draft<WorkflowSchema>, documentId: string, filename: string): void {
-  workflow.rules.recoveryOrder = workflow.rules.recoveryOrder.filter((step) => step.documentId !== documentId)
+function removeDocumentReferences(workflow: Draft<WorkflowSchema>, documentId: string, filename: string, removedTargetIds: Set<string>): void {
+  workflow.description = removeFilenameFromText(workflow.description, filename)
+  workflow.rules.recoveryOrder = workflow.rules.recoveryOrder
+    .filter((step) => step.documentId !== documentId)
+    .map((step) => ({ ...step, condition: removeFilenameFromText(step.condition, filename) }))
   const remainingRecoveryIds = new Set(workflow.rules.recoveryOrder.map((step) => step.id))
   workflow.rules.recoveryOrder.forEach((step) => {
     step.fallbackStepIds = step.fallbackStepIds.filter((id) => remainingRecoveryIds.has(id))
   })
   workflow.rules.sourcePriority = workflow.rules.sourcePriority
-    .filter((rule) => rule.targetId !== documentId)
-    .map((rule) => ({ ...rule, orderedSources: rule.orderedSources.filter((source) => source.documentId !== documentId).map((source, index) => ({ ...source, priority: index + 1 })) }))
-  workflow.rules.updateTriggers = workflow.rules.updateTriggers.filter((trigger) => trigger.targetDocumentId !== documentId)
+    .filter((rule) => !rule.targetId || !removedTargetIds.has(rule.targetId))
+    .map((rule) => ({
+      ...rule,
+      reason: removeFilenameFromText(rule.reason, filename),
+      orderedSources: rule.orderedSources
+        .filter((source) => source.documentId !== documentId)
+        .map((source, index) => ({ ...source, label: removeFilenameFromText(source.label, filename), priority: index + 1 })),
+    }))
+  workflow.rules.updateTriggers = workflow.rules.updateTriggers
+    .filter((trigger) => trigger.targetDocumentId !== documentId)
+    .map((trigger) => ({
+      ...trigger,
+      trigger: removeFilenameFromText(trigger.trigger, filename),
+      requiredAction: removeFilenameFromText(trigger.requiredAction, filename),
+    }))
   workflow.rules.completionChecks.forEach((check) => {
     check.relatedDocumentIds = check.relatedDocumentIds.filter((id) => id !== documentId)
+    check.label = removeFilenameFromText(check.label, filename)
+    check.description = removeFilenameFromText(check.description, filename)
   })
   workflow.documents.forEach((document) => {
+    document.description = removeFilenameFromText(document.description, filename)
+    document.readPolicy.whenToRead = document.readPolicy.whenToRead.map((text) => removeFilenameFromText(text, filename)).filter(Boolean)
+    document.readPolicy.skipWhen = document.readPolicy.skipWhen?.map((text) => removeFilenameFromText(text, filename)).filter(Boolean)
     document.readPolicy.dependsOnDocumentIds = document.readPolicy.dependsOnDocumentIds.filter((id) => id !== documentId)
-    document.sections.forEach((section) => section.fields.forEach((field) => {
-      field.value = removeFilenameFromValue(field.value, filename, documentId)
-    }))
+    document.updatePolicy.updateTriggers = document.updatePolicy.updateTriggers.map((text) => removeFilenameFromText(text, filename)).filter(Boolean)
+    if (document.updatePolicy.ownerHint) document.updatePolicy.ownerHint = removeFilenameFromText(document.updatePolicy.ownerHint, filename)
+    document.sections.forEach((section) => {
+      section.purpose = removeFilenameFromText(section.purpose, filename)
+      section.fields.forEach((field) => {
+        field.guidance = removeFilenameFromText(field.guidance, filename)
+        if (typeof field.defaultValue === 'string') field.defaultValue = removeFilenameFromText(field.defaultValue, filename)
+        field.options = field.options?.map((option) => ({
+          ...option,
+          value: removeFilenameFromText(option.value, filename),
+          label: removeFilenameFromText(option.label, filename),
+          description: option.description ? removeFilenameFromText(option.description, filename) : undefined,
+        }))
+        field.validation.allowedValues = field.validation.allowedValues?.map((text) => removeFilenameFromText(text, filename)).filter(Boolean)
+        field.validation.customRules.forEach((rule) => {
+          rule.description = removeFilenameFromText(rule.description, filename)
+        })
+        field.value = removeFilenameFromValue(field.value, filename, removedTargetIds)
+      })
+    })
   })
-  workflow.acceptedWarnings = workflow.acceptedWarnings.filter((warning) => warning.target.documentId !== documentId)
+  workflow.acceptedWarnings = workflow.acceptedWarnings.filter((warning) => (
+    warning.target.documentId !== documentId &&
+    (!warning.target.sectionId || !removedTargetIds.has(warning.target.sectionId)) &&
+    (!warning.target.fieldId || !removedTargetIds.has(warning.target.fieldId))
+  ))
 }
 
 function defaultSourcePriority(workflow: WorkflowSchema): SourceRef[] {
@@ -539,8 +582,12 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       workflow: produce(state.workflow, (draft) => {
         const removed = draft.documents.find((document) => document.id === documentId)
         if (!removed) return
+        const removedTargetIds = new Set([
+          removed.id,
+          ...removed.sections.flatMap((section) => [section.id, ...section.fields.map((field) => field.id)]),
+        ])
         draft.documents = draft.documents.filter((document) => document.id !== documentId)
-        removeDocumentReferences(draft, documentId, removed.filename)
+        removeDocumentReferences(draft, documentId, removed.filename, removedTargetIds)
         draft.documents.forEach((document, index) => {
           document.order = index + 1
           document.readPolicy.readOrderHint = index + 1
@@ -1022,16 +1069,19 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }))
     void get().saveCurrent()
   },
-  refreshProtocolDraft: () => {
+  refreshProtocolDraft: (options) => {
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
         const contentDocuments = draft.documents
           .filter((document) => document.role !== 'protocol')
           .map((document, index) => ({ ...document, order: index + 2, readPolicy: { ...document.readPolicy, readOrderHint: index + 2 } }))
-        const protocol = createProtocolDraftDocument(contentDocuments, 1)
+        const existingProtocol = draft.documents.find((document) => document.role === 'protocol')
+        const protocol = options?.replaceProtocol === false && existingProtocol
+          ? existingProtocol
+          : createProtocolDraftDocument(contentDocuments, 1)
         draft.documents = [protocol, ...contentDocuments]
-        draft.rules = createRulesForDocuments(contentDocuments)
+        if (options?.replaceRules !== false) draft.rules = createRulesForDocuments(contentDocuments)
         draft.documents.forEach((document, index) => {
           document.order = index + 1
           document.readPolicy.readOrderHint = index + 1

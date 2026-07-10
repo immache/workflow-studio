@@ -47,6 +47,32 @@ describe('Workflow Studio modular builder', () => {
     expect(protocolText).toContain('SPEC.html')
     expect(protocolText).toContain('STATUS.html')
     expect(protocolText).toContain('CONTEXT.html')
+    expect(protocolText).toContain('必读：AGENTS.md -> STATUS.html -> SPEC.html')
+    expect(protocolText).toContain('按需读取：USER.html')
+    expect(workflow.rules.recoveryOrder.map((step) => step.documentId)).toEqual([
+      'agents',
+      'content-status',
+      'content-spec',
+      'content-user',
+      'content-memory',
+      'content-context',
+    ])
+    expect(workflow.rules.recoveryOrder.map((step) => step.required)).toEqual([true, true, true, false, false, false])
+  })
+
+  it('allows STATUS.html to be omitted for a static workflow', () => {
+    const workflow = createModularWorkflow({
+      name: '静态工作流',
+      description: '只保存稳定计划。',
+      selectedDocumentIds: ['spec'],
+      firstAction: '读取入口协议。',
+      recoveryRisk: '无实时状态。',
+    })
+
+    expect(workflow.documents.map((document) => document.filename)).toEqual(['AGENTS.md', 'SPEC.html'])
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-realtime-status', severity: 'warning' }),
+    ]))
   })
 
   it('copies section and field modules into ordinary schema objects', () => {

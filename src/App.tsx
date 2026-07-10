@@ -71,8 +71,10 @@ type UiCopy = {
 
 type AppMode = 'home' | 'learn' | 'build' | 'advanced'
 type BuildStep = 0 | 1 | 2 | 3 | 4 | 5
+type AppRoute = { mode: AppMode; step: BuildStep; view?: AppView }
 
 type BuilderDraft = {
+  workflowId: string
   projectName: string
   recoveryRisk: string
   firstAction: string
@@ -81,13 +83,24 @@ type BuilderDraft = {
   reviewedDocumentIds: string[]
   protocolNeedsInitialGeneration: boolean
   hasBuilderProject: boolean
+  protocolBaselineFingerprint: string
+  rulesBaselineFingerprint: string
 }
 
-const BUILDER_DRAFT_KEY = 'workflow-studio.builder-draft.v1'
+const BUILDER_DRAFT_KEY_PREFIX = 'workflow-studio.builder-draft.v2'
 
-function readBuilderDraft(defaultProjectName: string): BuilderDraft {
+function protocolFingerprint(workflow: WorkflowSchema): string {
+  return JSON.stringify(workflow.documents.find((document) => document.role === 'protocol') ?? null)
+}
+
+function rulesFingerprint(workflow: WorkflowSchema): string {
+  return JSON.stringify(workflow.rules)
+}
+
+function readBuilderDraft(workflow: WorkflowSchema): BuilderDraft {
   const fallback: BuilderDraft = {
-    projectName: defaultProjectName,
+    workflowId: workflow.workflowId,
+    projectName: workflow.name,
     recoveryRisk: '目标、下一步和当前阻塞最容易丢失。',
     firstAction: '读取 STATUS.html，确认下一原子步骤。',
     selectedContentDocs: standardDocumentCards.filter((item) => item.recommended || item.required).map((item) => item.id),
@@ -95,45 +108,53 @@ function readBuilderDraft(defaultProjectName: string): BuilderDraft {
     reviewedDocumentIds: [],
     protocolNeedsInitialGeneration: false,
     hasBuilderProject: false,
+    protocolBaselineFingerprint: protocolFingerprint(workflow),
+    rulesBaselineFingerprint: rulesFingerprint(workflow),
   }
   try {
-    const value = window.localStorage.getItem(BUILDER_DRAFT_KEY)
+    const value = window.localStorage.getItem(`${BUILDER_DRAFT_KEY_PREFIX}.${workflow.workflowId}`)
     if (!value) return fallback
     const parsed = JSON.parse(value) as Partial<BuilderDraft>
+    if (parsed.workflowId !== workflow.workflowId) return fallback
     const allowedIds = new Set(standardDocumentCards.map((item) => item.id))
     const selectedContentDocs = Array.isArray(parsed.selectedContentDocs)
       ? parsed.selectedContentDocs.filter((id): id is ContentDocumentId => allowedIds.has(id as ContentDocumentId))
       : fallback.selectedContentDocs
-    for (const item of standardDocumentCards) {
-      if (item.required && !selectedContentDocs.includes(item.id)) selectedContentDocs.push(item.id)
-    }
     return {
+      workflowId: workflow.workflowId,
       projectName: typeof parsed.projectName === 'string' ? parsed.projectName : fallback.projectName,
       recoveryRisk: typeof parsed.recoveryRisk === 'string' ? parsed.recoveryRisk : fallback.recoveryRisk,
       firstAction: typeof parsed.firstAction === 'string' ? parsed.firstAction : fallback.firstAction,
-      selectedContentDocs: selectedContentDocs.length > 0 ? selectedContentDocs : fallback.selectedContentDocs,
+      selectedContentDocs,
       selectedCanvasDocumentId: typeof parsed.selectedCanvasDocumentId === 'string' ? parsed.selectedCanvasDocumentId : fallback.selectedCanvasDocumentId,
       reviewedDocumentIds: Array.isArray(parsed.reviewedDocumentIds)
         ? parsed.reviewedDocumentIds.filter((id): id is string => typeof id === 'string')
         : [],
       protocolNeedsInitialGeneration: parsed.protocolNeedsInitialGeneration === true,
       hasBuilderProject: parsed.hasBuilderProject === true,
+      protocolBaselineFingerprint: typeof parsed.protocolBaselineFingerprint === 'string' ? parsed.protocolBaselineFingerprint : fallback.protocolBaselineFingerprint,
+      rulesBaselineFingerprint: typeof parsed.rulesBaselineFingerprint === 'string' ? parsed.rulesBaselineFingerprint : fallback.rulesBaselineFingerprint,
     }
   } catch {
     return fallback
   }
 }
 
-function routeFromHash(): { mode: AppMode; step: BuildStep } {
+function routeFromHash(): AppRoute {
   const hash = window.location.hash.replace(/^#/, '')
   const buildMatch = hash.match(/^build\/step-([1-6])$/)
   if (buildMatch) return { mode: 'build', step: (Number(buildMatch[1]) - 1) as BuildStep }
-  if (hash === 'learn' || hash === 'advanced' || hash === 'home') return { mode: hash, step: 0 }
+  const advancedMatch = hash.match(/^advanced\/(overview|documents|rules|simulation|export)$/)
+  if (advancedMatch) return { mode: 'advanced', step: 0, view: advancedMatch[1] as AppView }
+  if (hash === 'advanced') return { mode: 'advanced', step: 0, view: 'overview' }
+  if (hash === 'learn' || hash === 'home') return { mode: hash, step: 0 }
   return { mode: 'home', step: 0 }
 }
 
-function routeHash(mode: AppMode, step: BuildStep): string {
-  return mode === 'build' ? `#build/step-${step + 1}` : `#${mode}`
+function routeHash(mode: AppMode, step: BuildStep, view: AppView = 'overview'): string {
+  if (mode === 'build') return `#build/step-${step + 1}`
+  if (mode === 'advanced') return `#advanced/${view}`
+  return `#${mode}`
 }
 
 const viewItems: { id: AppView; label: string; shortLabel: string; detail: string; icon: typeof Layers3 }[] = [
@@ -401,9 +422,9 @@ function ModuleFieldEditor({
   const removeField = useWorkflowStore((state) => state.removeField)
   const location = `${document.filename} > ${section.title} > ${field.label}`
 
-  function markAndRun(action: () => void) {
+  function markAndRun(action: () => void, nextLocation = location) {
     action()
-    onDirty(location)
+    onDirty(nextLocation)
   }
 
   return (
@@ -434,7 +455,13 @@ function ModuleFieldEditor({
             name={`${field.id}-label`}
             autoComplete="off"
             value={field.label}
-            onChange={(event) => markAndRun(() => updateField(document.id, section.id, field.id, { label: event.currentTarget.value }))}
+            onChange={(event) => {
+              const nextLabel = event.currentTarget.value
+              markAndRun(
+                () => updateField(document.id, section.id, field.id, { label: nextLabel }),
+                `${document.filename} > ${section.title} > ${nextLabel || '未命名字段'}`,
+              )
+            }}
           />
           <small>用未来模型一眼能判断用途的名称，例如“下一原子步骤”。</small>
         </label>
@@ -541,7 +568,13 @@ function ModuleSectionEditor({
       <div className="section-meta-form">
         <label>
           章节名称
-          <input name={`${section.id}-title`} autoComplete="off" value={section.title} onChange={(event) => markAndRun(() => updateSection(document.id, section.id, { title: event.currentTarget.value }))} />
+          <input name={`${section.id}-title`} autoComplete="off" value={section.title} onChange={(event) => {
+            const nextTitle = event.currentTarget.value
+            markAndRun(
+              () => updateSection(document.id, section.id, { title: nextTitle }),
+              `${document.filename} > ${nextTitle || '未命名章节'}`,
+            )
+          }} />
         </label>
         <label>
           这一章负责什么
@@ -609,7 +642,7 @@ function HomePage({ onLearn, onBuild, onAdvanced }: { onLearn: () => void; onBui
       <section className="home-hero" aria-labelledby="home-title">
         <div className="home-copy">
           <span className="kicker">Workflow Studio</span>
-          <h1 id="home-title">为未来接手项目的模型，留下一套清楚的工作流。</h1>
+          <h1 id="home-title">为未来<span className="semantic-unit">接手项目</span>的模型，留下一套清楚的<span className="semantic-unit">工作流</span>。</h1>
           <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。你会先选内容文档，再像搭积木一样设计每份文档。</p>
         </div>
         <div className="home-proof" aria-label="本地工作方式">
@@ -730,7 +763,7 @@ function BuildWizard({
   step: BuildStep
   onStepChange: (step: BuildStep) => void
   onLearn: () => void
-  onAdvanced: () => void
+  onAdvanced: (view: AppView) => void
 }) {
   const workflow = useWorkflowStore((state) => state.workflow)
   const createModularProject = useWorkflowStore((state) => state.createModularProject)
@@ -739,8 +772,7 @@ function BuildWizard({
   const updateDocument = useWorkflowStore((state) => state.updateDocument)
   const addSection = useWorkflowStore((state) => state.addSection)
   const refreshProtocolDraft = useWorkflowStore((state) => state.refreshProtocolDraft)
-  const setActiveView = useWorkflowStore((state) => state.setActiveView)
-  const [initialDraft] = useState(() => readBuilderDraft(workflow.name))
+  const [initialDraft] = useState(() => readBuilderDraft(workflow))
   const [projectName, setProjectName] = useState(initialDraft.projectName)
   const [recoveryRisk, setRecoveryRisk] = useState(initialDraft.recoveryRisk)
   const [firstAction, setFirstAction] = useState(initialDraft.firstAction)
@@ -751,11 +783,15 @@ function BuildWizard({
   const [reviewedDocumentIds, setReviewedDocumentIds] = useState<Set<string>>(() => new Set(initialDraft.reviewedDocumentIds))
   const [protocolNeedsInitialGeneration, setProtocolNeedsInitialGeneration] = useState(initialDraft.protocolNeedsInitialGeneration)
   const [hasBuilderProject, setHasBuilderProject] = useState(initialDraft.hasBuilderProject)
+  const [protocolBaseline, setProtocolBaseline] = useState(initialDraft.protocolBaselineFingerprint)
+  const [rulesBaseline, setRulesBaseline] = useState(initialDraft.rulesBaselineFingerprint)
   const [latestWriteTarget, setLatestWriteTarget] = useState('先选择一份文档。')
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedMessage, setGeneratedMessage] = useState('')
   const importInputRef = useRef<HTMLInputElement>(null)
   const stepperRef = useRef<HTMLOListElement>(null)
+  const draftWorkflowIdRef = useRef(initialDraft.workflowId)
+  const skipDraftSaveRef = useRef(false)
   const contentDocuments = workflow.documents.filter((document) => document.role !== 'protocol')
   const canvasDocument = contentDocuments.find((document) => document.id === selectedCanvasDocumentId) ?? contentDocuments[0]
   const protocolDocument = workflow.documents.find((document) => document.role === 'protocol')
@@ -807,7 +843,29 @@ function BuildWizard({
   }, [step])
 
   useEffect(() => {
+    if (draftWorkflowIdRef.current === workflow.workflowId) return
+    const nextDraft = readBuilderDraft(workflow)
+    draftWorkflowIdRef.current = workflow.workflowId
+    skipDraftSaveRef.current = true
+    setProjectName(nextDraft.projectName)
+    setRecoveryRisk(nextDraft.recoveryRisk)
+    setFirstAction(nextDraft.firstAction)
+    setSelectedContentDocs(new Set(nextDraft.selectedContentDocs))
+    setSelectedCanvasDocumentId(nextDraft.selectedCanvasDocumentId)
+    setReviewedDocumentIds(new Set(nextDraft.reviewedDocumentIds))
+    setProtocolNeedsInitialGeneration(nextDraft.protocolNeedsInitialGeneration)
+    setHasBuilderProject(nextDraft.hasBuilderProject)
+    setProtocolBaseline(nextDraft.protocolBaselineFingerprint)
+    setRulesBaseline(nextDraft.rulesBaselineFingerprint)
+  }, [workflow])
+
+  useEffect(() => {
+    if (skipDraftSaveRef.current) {
+      skipDraftSaveRef.current = false
+      return
+    }
     const draft: BuilderDraft = {
+      workflowId: workflow.workflowId,
       projectName,
       recoveryRisk,
       firstAction,
@@ -816,13 +874,15 @@ function BuildWizard({
       reviewedDocumentIds: [...reviewedDocumentIds],
       protocolNeedsInitialGeneration,
       hasBuilderProject,
+      protocolBaselineFingerprint: protocolBaseline,
+      rulesBaselineFingerprint: rulesBaseline,
     }
     try {
-      window.localStorage.setItem(BUILDER_DRAFT_KEY, JSON.stringify(draft))
+      window.localStorage.setItem(`${BUILDER_DRAFT_KEY_PREFIX}.${workflow.workflowId}`, JSON.stringify(draft))
     } catch {
       // IndexedDB still stores the generated workflow when localStorage is unavailable.
     }
-  }, [firstAction, hasBuilderProject, projectName, protocolNeedsInitialGeneration, recoveryRisk, reviewedDocumentIds, selectedCanvasDocumentId, selectedContentDocs])
+  }, [firstAction, hasBuilderProject, projectName, protocolBaseline, protocolNeedsInitialGeneration, recoveryRisk, reviewedDocumentIds, rulesBaseline, selectedCanvasDocumentId, selectedContentDocs, workflow.workflowId])
 
   useEffect(() => {
     if (step !== 2 || !canvasDocument) return
@@ -854,6 +914,10 @@ function BuildWizard({
   }
 
   async function createFromDocumentSelection(nextStep: BuildStep = 2) {
+    if (selectedContentDocs.size === 0) {
+      setGeneratedMessage('请至少选择 1 份内容文档；AGENTS.md 会在这些文档设计完成后自动生成。')
+      return
+    }
     if (hasBuilderProject && !window.confirm('重新生成文档会替换当前模块画布和入口协议草案。确认放弃现有搭建内容并继续？')) return
     setIsGenerating(true)
     try {
@@ -864,10 +928,14 @@ function BuildWizard({
         firstAction,
         recoveryRisk,
       })
-      setSelectedCanvasDocumentId('content-status')
+      const createdWorkflow = useWorkflowStore.getState().workflow
+      draftWorkflowIdRef.current = createdWorkflow.workflowId
+      setSelectedCanvasDocumentId(createdWorkflow.documents.find((document) => document.role !== 'protocol')?.id ?? '')
       setReviewedDocumentIds(new Set())
       setProtocolNeedsInitialGeneration(true)
       setHasBuilderProject(true)
+      setProtocolBaseline(protocolFingerprint(createdWorkflow))
+      setRulesBaseline(rulesFingerprint(createdWorkflow))
       setGeneratedMessage('已根据所选内容文档生成工作流；入口协议草案已经后置生成，稍后可审查。')
       goToStep(nextStep)
     } finally {
@@ -881,15 +949,18 @@ function BuildWizard({
     try {
       await importProject(file)
       const importedWorkflow = useWorkflowStore.getState().workflow
+      draftWorkflowIdRef.current = importedWorkflow.workflowId
       const importedContentDocuments = importedWorkflow.documents.filter((document) => document.role !== 'protocol')
       const importedIds = importedContentDocuments
         .map((document) => document.id.replace(/^content-/, ''))
         .filter((id): id is ContentDocumentId => standardDocumentCards.some((card) => card.id === id))
-      if (importedIds.length > 0) setSelectedContentDocs(new Set(importedIds))
+      setSelectedContentDocs(new Set(importedIds))
       setSelectedCanvasDocumentId(importedContentDocuments[0]?.id ?? '')
       setReviewedDocumentIds(new Set())
       setProtocolNeedsInitialGeneration(false)
       setHasBuilderProject(true)
+      setProtocolBaseline(protocolFingerprint(importedWorkflow))
+      setRulesBaseline(rulesFingerprint(importedWorkflow))
       setGeneratedMessage(`已导入 ${file.name}。你可以在模块画布中检查文档职责，再审查入口协议。`)
       goToStep(2)
     } catch (error) {
@@ -901,7 +972,6 @@ function BuildWizard({
   }
 
   function toggleContentDocument(id: ContentDocumentId) {
-    if (standardDocumentCards.find((item) => item.id === id)?.required) return
     setSelectedContentDocs((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
@@ -931,9 +1001,19 @@ function BuildWizard({
       return
     }
     if (protocolNeedsInitialGeneration) {
-      refreshProtocolDraft()
+      const currentWorkflow = useWorkflowStore.getState().workflow
+      const protocolWasEdited = protocolFingerprint(currentWorkflow) !== protocolBaseline
+      const rulesWereEdited = rulesFingerprint(currentWorkflow) !== rulesBaseline
+      const replaceProtocol = !protocolWasEdited || window.confirm('检测到 AGENTS.md 已被手工修改。是否仅用最终内容文档重新生成并覆盖入口协议？选择“取消”会保留手工协议。')
+      const replaceRules = !rulesWereEdited || window.confirm('检测到恢复顺序、来源优先级或维护规则已被手工修改。是否重新生成并覆盖这些规则？选择“取消”会保留手工规则。')
+      if (replaceProtocol || replaceRules) refreshProtocolDraft({ replaceProtocol, replaceRules })
+      const reviewedWorkflow = useWorkflowStore.getState().workflow
+      setProtocolBaseline(protocolFingerprint(reviewedWorkflow))
+      setRulesBaseline(rulesFingerprint(reviewedWorkflow))
       setProtocolNeedsInitialGeneration(false)
-      setGeneratedMessage('入口协议草案已根据最终内容文档生成。请审查文档清单、读取顺序、来源优先级、更新规则和完成检查。')
+      setGeneratedMessage(replaceProtocol && replaceRules
+        ? '入口协议草案已根据最终内容文档生成。请审查文档清单、读取顺序、来源优先级、更新规则和完成检查。'
+        : '已保留你选择不覆盖的手工协议或规则；请检查它们是否仍与最终内容文档一致。')
     } else {
       setGeneratedMessage('已保留当前入口协议草案，没有覆盖导入或手工修改。请继续审查各模块。')
     }
@@ -947,20 +1027,38 @@ function BuildWizard({
   }
 
   function regenerateProtocolDraft() {
-    const confirmed = window.confirm('重新生成会覆盖当前 AGENTS.md 的模块、字段内容和恢复规则。只有确认不再保留手工修改时才继续。是否重新生成？')
-    if (!confirmed) return
-    refreshProtocolDraft()
+    const replaceProtocol = window.confirm('重新生成会覆盖当前 AGENTS.md 的全部模块和字段内容。确认覆盖入口协议吗？')
+    const replaceRules = window.confirm('重新生成也可以覆盖恢复顺序、来源优先级、更新规则和完成检查。确认覆盖恢复规则吗？')
+    if (!replaceProtocol && !replaceRules) return
+    refreshProtocolDraft({ replaceProtocol, replaceRules })
+    const refreshedWorkflow = useWorkflowStore.getState().workflow
+    setProtocolBaseline(protocolFingerprint(refreshedWorkflow))
+    setRulesBaseline(rulesFingerprint(refreshedWorkflow))
     setProtocolNeedsInitialGeneration(false)
-    setGeneratedMessage('入口协议草案已重新生成；之前的手工协议修改已被替换。')
+    setGeneratedMessage(replaceProtocol && replaceRules
+      ? '入口协议和恢复规则已重新生成；之前的手工修改已被替换。'
+      : '已重新生成你确认覆盖的部分，另一部分继续保留手工内容。')
   }
 
   function openAdvanced(view: AppView) {
-    setActiveView(view)
-    onAdvanced()
+    onAdvanced(view)
   }
 
   const steps = ['确定用途', '选择文档', '模块画布', '协议草案', '结果预览', '演练导出']
   const purposeReady = projectName.trim().length > 0 && recoveryRisk.trim().length > 0 && firstAction.trim().length > 0
+
+  function continueFromPurpose() {
+    if (purposeReady) {
+      goToStep(1)
+      return
+    }
+    const firstInvalidId = !projectName.trim()
+      ? 'builder-project-name'
+      : !recoveryRisk.trim()
+        ? 'builder-recovery-risk'
+        : 'builder-first-action'
+    document.getElementById(firstInvalidId)?.focus()
+  }
 
   return (
     <main className="onboarding-main build-main" id="main-workspace">
@@ -1001,28 +1099,29 @@ function BuildWizard({
               <span className="kicker">Step 1</span>
               <h2 id="start-title" tabIndex={-1}>先说清这套工作流要帮谁接手什么。</h2>
               <p>工作流的目的，是让模型知道始终该读什么、信什么、接着做什么。这里先收集最少信息，下一步再选择内容文档。</p>
+              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
               <div className="question-form">
                 <label>
                   这个工作流服务哪个项目或任务？
-                  <input name="builder-project-name" autoComplete="off" value={projectName} onChange={(event) => setProjectName(event.currentTarget.value)} />
-                  {!projectName.trim() ? <small className="field-error">请写一个能识别的项目或任务名称。</small> : null}
+                  <input id="builder-project-name" name="builder-project-name" aria-label="这个工作流服务哪个项目或任务？" aria-invalid={!projectName.trim()} aria-describedby={!projectName.trim() ? 'builder-project-name-error' : undefined} autoComplete="off" value={projectName} onChange={(event) => setProjectName(event.currentTarget.value)} />
+                  {!projectName.trim() ? <small id="builder-project-name-error" className="field-error" role="alert">请写一个能识别的项目或任务名称。</small> : null}
                 </label>
                 <label>
                   未来模型恢复时最容易丢失什么信息？
-                  <textarea name="builder-recovery-risk" autoComplete="off" rows={3} value={recoveryRisk} onChange={(event) => setRecoveryRisk(event.currentTarget.value)} />
-                  {!recoveryRisk.trim() ? <small className="field-error">请说明至少一种恢复时容易丢失的信息。</small> : null}
+                  <textarea id="builder-recovery-risk" name="builder-recovery-risk" aria-label="未来模型恢复时最容易丢失什么信息？" aria-invalid={!recoveryRisk.trim()} aria-describedby={!recoveryRisk.trim() ? 'builder-recovery-risk-error' : undefined} autoComplete="off" rows={3} value={recoveryRisk} onChange={(event) => setRecoveryRisk(event.currentTarget.value)} />
+                  {!recoveryRisk.trim() ? <small id="builder-recovery-risk-error" className="field-error" role="alert">请说明至少一种恢复时容易丢失的信息。</small> : null}
                 </label>
                 <label>
                   恢复后希望模型立刻做什么？
-                  <textarea name="builder-first-action" autoComplete="off" rows={3} value={firstAction} onChange={(event) => setFirstAction(event.currentTarget.value)} />
-                  {!firstAction.trim() ? <small className="field-error">请写一个恢复后可以立刻执行的动作。</small> : null}
+                  <textarea id="builder-first-action" name="builder-first-action" aria-label="恢复后希望模型立刻做什么？" aria-invalid={!firstAction.trim()} aria-describedby={!firstAction.trim() ? 'builder-first-action-error' : undefined} autoComplete="off" rows={3} value={firstAction} onChange={(event) => setFirstAction(event.currentTarget.value)} />
+                  {!firstAction.trim() ? <small id="builder-first-action-error" className="field-error" role="alert">请写一个恢复后可以立刻执行的动作。</small> : null}
                 </label>
               </div>
               <div className="builder-actions">
-                <button type="button" className="button button-primary" disabled={!purposeReady} onClick={() => goToStep(1)}>
+                <button type="button" className="button button-primary" onClick={continueFromPurpose}>
                   继续选择内容文档
                 </button>
-                <button type="button" className="button button-secondary" onClick={() => importInputRef.current?.click()} disabled={isGenerating}>
+                <button type="button" className="button button-secondary" aria-controls="builder-import-input" onClick={() => importInputRef.current?.click()} disabled={isGenerating}>
                   导入已有包
                 </button>
                 <button type="button" className="button button-ghost" onClick={onLearn}>
@@ -1031,9 +1130,11 @@ function BuildWizard({
               </div>
               <input
                 ref={importInputRef}
+                id="builder-import-input"
                 className="visually-hidden"
                 type="file"
                 tabIndex={-1}
+                aria-label="导入已有工作流包"
                 accept=".json,.zip,application/json,application/zip"
                 onChange={(event) => void handleImportStart(event.currentTarget.files?.[0])}
               />
@@ -1045,12 +1146,12 @@ function BuildWizard({
               <span className="kicker">Step 2</span>
               <h2 id="materials-title" tabIndex={-1}>先选择需要的内容文档。</h2>
               <p><code>AGENTS.md</code> 不需要你第一步手写。你先选择内容文档，系统会在后面根据这些文档自动生成入口协议草案。</p>
-              {generatedMessage ? <p className="notice">{generatedMessage}</p> : null}
+              {generatedMessage ? <p className="notice" aria-live="polite">{generatedMessage}</p> : null}
               <div className="material-grid">
                 {standardDocumentCards.map((item) => (
                   <label key={item.id} className={selectedContentDocs.has(item.id) ? 'material-card document-card selected' : 'material-card document-card'}>
-                    <input name={`document-${item.id}`} type="checkbox" checked={selectedContentDocs.has(item.id)} disabled={item.required} onChange={() => toggleContentDocument(item.id)} />
-                    <strong>{item.filename}{item.required ? <em>必要</em> : null}</strong>
+                    <input name={`document-${item.id}`} type="checkbox" checked={selectedContentDocs.has(item.id)} onChange={() => toggleContentDocument(item.id)} />
+                    <strong>{item.filename}{item.recommended ? <em>推荐</em> : null}</strong>
                     <span>{item.description}</span>
                     <small>{item.whenToUse}</small>
                   </label>
@@ -1062,7 +1163,7 @@ function BuildWizard({
               </section>
               <div className="builder-actions">
                 <button type="button" className="button button-secondary" onClick={() => goToStep(0)}><ArrowLeft size={16} aria-hidden="true" />返回用途说明</button>
-                <button type="button" className="button button-primary" onClick={() => void createFromDocumentSelection()} disabled={isGenerating}>
+                <button type="button" className="button button-primary" onClick={() => void createFromDocumentSelection()} disabled={isGenerating || selectedContentDocs.size === 0}>
                   生成文档并进入模块画布
                 </button>
               </div>
@@ -1396,15 +1497,19 @@ function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCoun
       </div>
       <nav className="mode-nav" aria-label="页面入口">
         {modeItems.map((item) => (
-          <button
+          <a
             key={item.id}
-            type="button"
+            href={routeHash(item.id, 0)}
             className={mode === item.id ? 'mode-tab active' : 'mode-tab'}
             aria-current={mode === item.id ? 'page' : undefined}
-            onClick={() => onModeChange(item.id)}
+            onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              onModeChange(item.id)
+            }}
           >
             {item.label}
-          </button>
+          </a>
         ))}
       </nav>
       <div className="topbar-actions">
@@ -1414,15 +1519,17 @@ function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCoun
             检查
           </button>
         ) : null}
-        <button type="button" className="button button-secondary" onClick={() => fileInputRef.current?.click()}>
+        <button type="button" className="button button-secondary" aria-controls="topbar-import-input" onClick={() => fileInputRef.current?.click()}>
           <Import size={16} aria-hidden="true" />
           导入
         </button>
         <input
           ref={fileInputRef}
+          id="topbar-import-input"
           className="visually-hidden"
           type="file"
           tabIndex={-1}
+          aria-label="导入工作流 JSON 或 ZIP"
           accept=".json,.zip,application/json,application/zip"
           onChange={(event) => void handleImport(event.currentTarget.files?.[0])}
         />
@@ -1446,7 +1553,7 @@ function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCoun
             ? <span className="status-pill">{issueCount} 个 Error</span>
             : <span className="status-pill status-pill-ok">可导出</span>}
       </div>
-      {workflow.readOnlyReason ? <p className="topbar-message">{workflow.readOnlyReason}</p> : importMessage ? <p className="topbar-message">{importMessage}</p> : null}
+      {workflow.readOnlyReason ? <p className="topbar-message" role="status" aria-live="polite">{workflow.readOnlyReason}</p> : importMessage ? <p className="topbar-message" role="status" aria-live="polite">{importMessage}</p> : null}
     </header>
   )
 }
@@ -2334,7 +2441,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
       <div className="section-heading">
         <div>
           <span className="kicker">Export</span>
-          <h1 id="export-title">生成可复制的工作流包</h1>
+          <h1 id="export-title">生成可复制的<span className="semantic-unit">工作流包</span></h1>
           <p>确认 ZIP 内每个文件的用途；有 Error 时必须先修复，不能绕过导出。</p>
         </div>
         <div className="inline-actions">
@@ -2594,8 +2701,11 @@ function MainWorkspace({ issues }: { issues: ValidationIssue[] }) {
 function App() {
   const initialize = useWorkflowStore((state) => state.initialize)
   const workflow = useWorkflowStore((state) => state.workflow)
+  const activeView = useWorkflowStore((state) => state.activeView)
+  const setActiveView = useWorkflowStore((state) => state.setActiveView)
   const [route, setRoute] = useState(routeFromHash)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const syncingAdvancedViewRef = useRef(false)
   const mode = route.mode
   const issues = useMemo(() => validateWorkflow(workflow), [workflow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
@@ -2608,7 +2718,14 @@ function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 })
-  }, [mode])
+    const timer = window.setTimeout(() => {
+      const heading = document.querySelector<HTMLElement>('#main-workspace h1')
+      if (!heading) return
+      heading.tabIndex = -1
+      heading.focus({ preventScroll: true })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeView, mode])
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', routeHash('home', 0))
@@ -2621,10 +2738,30 @@ function App() {
     }
   }, [])
 
-  function changeMode(nextMode: AppMode, requestedStep?: BuildStep) {
+  useEffect(() => {
+    if (route.mode !== 'advanced' || !route.view) return
+    const currentView = useWorkflowStore.getState().activeView
+    if (currentView === route.view) return
+    syncingAdvancedViewRef.current = true
+    setActiveView(route.view)
+  }, [route.mode, route.view, setActiveView])
+
+  useEffect(() => {
+    if (syncingAdvancedViewRef.current) {
+      syncingAdvancedViewRef.current = false
+      return
+    }
+    if (mode !== 'advanced' || activeView === route.view) return
+    const nextHash = routeHash('advanced', 0, activeView)
+    window.history.pushState(null, '', nextHash)
+    setRoute({ mode: 'advanced', step: 0, view: activeView })
+  }, [activeView, mode, route.view])
+
+  function changeMode(nextMode: AppMode, requestedStep?: BuildStep, requestedView?: AppView) {
     const nextStep = nextMode === 'build' ? requestedStep ?? route.step : route.step
-    const nextRoute = { mode: nextMode, step: nextStep }
-    const nextHash = routeHash(nextMode, nextStep)
+    const nextView = nextMode === 'advanced' ? requestedView ?? activeView : route.view
+    const nextRoute: AppRoute = { mode: nextMode, step: nextStep, view: nextView }
+    const nextHash = routeHash(nextMode, nextStep, nextView)
     if (window.location.hash !== nextHash) window.history.pushState(null, '', nextHash)
     setRoute(nextRoute)
     if (nextMode !== 'advanced') setInspectorOpen(false)
@@ -2636,7 +2773,7 @@ function App() {
       {workflow.readOnlyReason ? <div className="read-only-banner" role="status">{workflow.readOnlyReason}</div> : null}
       {mode === 'home' ? <HomePage onLearn={() => changeMode('learn')} onBuild={() => changeMode('build', 0)} onAdvanced={() => changeMode('advanced')} /> : null}
       {mode === 'learn' ? <LearnPage onBuild={(step) => changeMode('build', step)} /> : null}
-      {mode === 'build' ? <BuildWizard step={route.step} onStepChange={(step) => changeMode('build', step)} onLearn={() => changeMode('learn')} onAdvanced={() => changeMode('advanced')} /> : null}
+      {mode === 'build' ? <BuildWizard step={route.step} onStepChange={(step) => changeMode('build', step)} onLearn={() => changeMode('learn')} onAdvanced={(view) => changeMode('advanced', undefined, view)} /> : null}
       {mode === 'advanced' ? (
         <div className="studio-layout">
           <LeftRail />

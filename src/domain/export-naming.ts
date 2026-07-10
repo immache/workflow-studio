@@ -12,7 +12,8 @@ function replaceExtension(filename: string, extension: '.html' | '.md'): string 
 }
 
 export function projectDocumentFilename(document: WorkflowDocument, format: MaintenanceFormat): string {
-  if (format === 'markdown' || document.role === 'protocol') {
+  if (document.role === 'protocol') return 'AGENTS.md'
+  if (format === 'markdown') {
     return replaceExtension(document.filename, '.md')
   }
   return replaceExtension(document.filename, '.html')

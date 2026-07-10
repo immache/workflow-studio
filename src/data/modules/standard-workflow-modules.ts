@@ -95,10 +95,10 @@ export const standardDocumentCards: StandardDocumentCard[] = [
     role: 'status',
     lifecycle: 'realtime',
     description: '记录当前目标、下一原子步骤、已验证事实、阻塞和恢复指针。',
-    whenToUse: '几乎所有可恢复工作流都需要它；第一版固定启用。',
+    whenToUse: '需要持续记录当前目标、下一步或阻塞时启用；推荐使用，但可以取消。',
     generatedResult: '生成当前目标、下一原子步骤、阻塞确认和恢复指针。',
     recommended: true,
-    required: true,
+    required: false,
   },
   {
     id: 'user',
@@ -327,11 +327,16 @@ function document(input: {
   order: number
   sections: WorkflowSection[]
 }): WorkflowDocument {
+  const whenToReadByRole: Partial<Record<DocumentRole, string[]>> = {
+    preference: ['长期用户偏好会影响当前任务时读取'],
+    history: ['实时文档不足或需要理解项目演变时按关键词读取'],
+    context: ['术语含义、边界或归属不清楚时读取'],
+  }
   return {
     ...input,
-    required: input.role === 'protocol' || input.role === 'status',
+    required: input.role === 'protocol',
     readPolicy: {
-      whenToRead: input.role === 'history' ? ['实时文档不足时按关键词读取'] : ['恢复时按规则读取'],
+      whenToRead: whenToReadByRole[input.role] ?? ['恢复时按规则读取'],
       dependsOnDocumentIds: [],
       readOrderHint: input.order,
     },
@@ -352,7 +357,6 @@ export function normalizeContentDocumentIds(ids?: Iterable<string>): ContentDocu
       if (allowed.has(id as ContentDocumentId)) selected.add(id as ContentDocumentId)
     }
   }
-  selected.add('status')
   return contentDocumentOrder.filter((id) => selected.has(id))
 }
 
@@ -437,6 +441,19 @@ function sourceRefsForDocuments(documents: WorkflowDocument[]): SourceRef[] {
   return refs.map((ref, index) => ({ ...ref, priority: index + 1 }))
 }
 
+function orderedRecoveryDocuments(documents: WorkflowDocument[]): WorkflowDocument[] {
+  const rolePriority: Partial<Record<DocumentRole, number>> = {
+    status: 1,
+    plan: 2,
+    preference: 3,
+    history: 4,
+    context: 5,
+  }
+  return [...documents].sort((left, right) => (
+    (rolePriority[left.role] ?? 99) - (rolePriority[right.role] ?? 99) || left.order - right.order
+  ))
+}
+
 function recoveryOrderForDocuments(documents: WorkflowDocument[]): RecoveryStep[] {
   const protocolStep: RecoveryStep = {
     id: 'recovery-agents',
@@ -447,7 +464,7 @@ function recoveryOrderForDocuments(documents: WorkflowDocument[]): RecoveryStep[
   }
   return [
     protocolStep,
-    ...documents.map((documentItem) => ({
+    ...orderedRecoveryDocuments(documents).map((documentItem) => ({
       id: `recovery-${documentItem.id}`,
       documentId: documentItem.id,
       condition: documentItem.role === 'history' || documentItem.role === 'context' || documentItem.role === 'preference'
@@ -530,7 +547,15 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
   const readableDocs = documents
     .map((documentItem, index) => `${index + 1}. ${documentItem.filename}：${documentItem.description}`)
     .join('\n')
-  const recoveryOrder = ['AGENTS.md', ...documents.map((documentItem) => documentItem.filename)].join(' -> ')
+  const orderedDocuments = orderedRecoveryDocuments(documents)
+  const requiredDocuments = orderedDocuments.filter((documentItem) => documentItem.role === 'status' || documentItem.role === 'plan')
+  const onDemandDocuments = orderedDocuments.filter((documentItem) => !requiredDocuments.includes(documentItem))
+  const recoveryOrder = [
+    `必读：${['AGENTS.md', ...requiredDocuments.map((documentItem) => documentItem.filename)].join(' -> ')}`,
+    onDemandDocuments.length > 0
+      ? `按需读取：${onDemandDocuments.map((documentItem) => `${documentItem.filename}（${documentItem.readPolicy.whenToRead.join('；') || '职责相关时读取'}）`).join('；')}`
+      : '',
+  ].filter(Boolean).join('\n')
   const sourcePriority = sourceRefsForDocuments(documents)
     .map((source, index) => `${index + 1}. ${source.label}`)
     .join('\n')

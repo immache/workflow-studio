@@ -107,7 +107,13 @@ function assertFieldValue(value: unknown): asserts value is FieldValue {
   }
   if (value.kind === 'table') {
     if (!isStringArray(value.columns) || !Array.isArray(value.rows)) throw new Error('table 字段值无效。')
-    if (!value.rows.every(isRecord)) throw new Error('table rows 字段值无效。')
+    if (value.columns.some((column) => !column.trim()) || new Set(value.columns).size !== value.columns.length) {
+      throw new Error('table columns 必须是非空且不重复的字符串。')
+    }
+    const columnSet = new Set(value.columns)
+    if (!value.rows.every((row) => isRecord(row) && Object.entries(row).every(([key, cell]) => columnSet.has(key) && typeof cell === 'string'))) {
+      throw new Error('table rows 的键必须来自 columns，且单元格必须是字符串。')
+    }
     return
   }
   if (value.kind === 'reference') {

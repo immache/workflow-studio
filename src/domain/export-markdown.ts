@@ -26,13 +26,14 @@ function renderValue(field: WorkflowField, value: string): string {
 
 export function renderMarkdownDocument(document: WorkflowDocument, projection: DocumentNameProjection): string {
   const outputFilename = projection.byDocumentId.get(document.id) ?? document.filename
-  const lines = [`# ${document.title}`, '', `文件名：\`${outputFilename}\``, `职责：\`${document.role}\``, '', document.description, '']
+  const rewrite = (text: string) => rewriteDocumentReferences(text, projection)
+  const lines = [`# ${rewrite(document.title)}`, '', `文件名：\`${outputFilename}\``, `职责：\`${document.role}\``, '', rewrite(document.description), '']
   for (const section of document.sections) {
-    lines.push(`## ${section.title}`, '', `说明：${section.purpose}`, '')
+    lines.push(`## ${rewrite(section.title)}`, '', `说明：${rewrite(section.purpose)}`, '')
     for (const field of section.fields) {
-      const guidance = rewriteDocumentReferences(field.guidance, projection)
-      const value = rewriteDocumentReferences(fieldValueToText(field.value), projection)
-      lines.push(`### ${field.label}`, '', `说明：${guidance}`, '', renderValue(field, value), '')
+      const guidance = rewrite(field.guidance)
+      const value = rewrite(fieldValueToText(field.value))
+      lines.push(`### ${rewrite(field.label)}`, '', `说明：${guidance}`, '', renderValue(field, value), '')
     }
   }
   return lines.join('\n')
@@ -45,14 +46,15 @@ export function exportMarkdownDocuments(workflow: WorkflowSchema): Record<string
 
 export function exportReadme(workflow: WorkflowSchema, format: MaintenanceFormat = workflow.maintenanceFormat): string {
   const projection = projectDocumentNames(workflow, format)
-  const files = workflow.documents.map((document) => `- \`${projection.byDocumentId.get(document.id)}\`：${document.description}`).join('\n')
+  const rewrite = (text: string) => rewriteDocumentReferences(text, projection)
+  const files = workflow.documents.map((document) => `- \`${projection.byDocumentId.get(document.id)}\`：${rewrite(document.description)}`).join('\n')
   const moduleSummary = workflow.documents.map((document) => {
-    const sections = document.sections.map((section) => `${section.title}（${section.fields.length} 个字段）`).join('；')
+    const sections = document.sections.map((section) => `${rewrite(section.title)}（${section.fields.length} 个字段）`).join('；')
     return `- \`${projection.byDocumentId.get(document.id)}\`：${sections || '暂无章节'}`
   }).join('\n')
   const recovery = workflow.rules.recoveryOrder.map((step, index) => {
     const document = workflow.documents.find((candidate) => candidate.id === step.documentId)
-    return `${index + 1}. ${document ? projection.byDocumentId.get(document.id) : step.documentId} - ${step.condition}`
+    return `${index + 1}. ${document ? projection.byDocumentId.get(document.id) : step.documentId} - ${rewrite(step.condition)}`
   }).join('\n')
-  return [`# ${workflow.name}`, '', workflow.description, '', '## 文件清单', '', files, '', '## 模块摘要', '', moduleSummary, '', '## 推荐读取顺序', '', recovery || '未配置。', '', '## 导入说明', '', '保留 `workflow.json` 作为结构化事实源，可重新导入 Workflow Studio。', ''].join('\n')
+  return [`# ${rewrite(workflow.name)}`, '', rewrite(workflow.description), '', '## 文件清单', '', files, '', '## 模块摘要', '', moduleSummary, '', '## 推荐读取顺序', '', recovery || '未配置。', '', '## 导入说明', '', '保留 `workflow.json` 作为结构化事实源，可重新导入 Workflow Studio。', ''].join('\n')
 }

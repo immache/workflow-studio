@@ -8,6 +8,7 @@ import {
 } from './schema'
 import { unsafeDocumentFilenameReason } from './file-safety'
 import { projectedFilenameCollisions } from './export-naming'
+import { realtimeStatusDocuments, resolveNextAtomicStep } from './recovery-semantics'
 
 function issue(input: Omit<ValidationIssue, 'id'> & { id?: string }): ValidationIssue {
   return {
@@ -69,18 +70,6 @@ function targetExists(workflow: WorkflowSchema, target: ValidationTarget): boole
   return true
 }
 
-function hasFieldId(workflow: WorkflowSchema, matcher: (id: string) => boolean): boolean {
-  return workflow.documents.some((document) => document.sections.some((section) => section.fields.some((field) => matcher(field.id))))
-}
-
-function hasNonEmptyFieldId(workflow: WorkflowSchema, matcher: (id: string) => boolean): boolean {
-  return workflow.documents.some((document) =>
-    document.sections.some((section) =>
-      section.fields.some((field) => matcher(field.id) && !isFieldEmpty(field)),
-    ),
-  )
-}
-
 const requiredPresetSections: Record<string, string[]> = {
   'SPEC.html': ['mission', 'success-criteria', 'scope', 'phases', 'persistent-constraints', 'users-scenarios', 'open-questions'],
   'STATUS.html': ['anchor', 'state', 'next-step', 'facts', 'blockers', 'recovery-pointers'],
@@ -89,12 +78,12 @@ const requiredPresetSections: Record<string, string[]> = {
   'CONTEXT.html': ['context-usage-section', 'entry-fields', 'basic-terms', 'custom-term-template', 'context-boundaries', 'context-maintenance-rules'],
 }
 
-const modularProtocolSectionIds = [
-  'protocol-doc-list',
-  'protocol-read-order',
-  'protocol-source-priority',
-  'protocol-update-rules',
-  'protocol-completion',
+const protocolCoreModules = [
+  { label: '文档清单', sectionIds: ['protocol-doc-list', 'document-responsibility'], titlePattern: /文档(?:清单|职责)/ },
+  { label: '读取顺序', sectionIds: ['protocol-read-order', 'recovery-path', 'recovery'], titlePattern: /(?:读取顺序|恢复路径)/ },
+  { label: '来源优先级', sectionIds: ['protocol-source-priority', 'source-priority'], titlePattern: /来源优先级/ },
+  { label: '更新规则', sectionIds: ['protocol-update-rules', 'update-rules'], titlePattern: /更新规则/ },
+  { label: '完成检查', sectionIds: ['protocol-completion', 'completion-protocol'], titlePattern: /(?:完成检查|完成协议)/ },
 ]
 
 const currentStandardPresetDocuments: Record<string, string> = {
@@ -107,6 +96,15 @@ const currentStandardPresetDocuments: Record<string, string> = {
 
 function isCurrentStandardPresetDocument(document: WorkflowDocument): boolean {
   return currentStandardPresetDocuments[document.id] === document.filename
+}
+
+function protocolCoreSection(document: WorkflowDocument, definition: typeof protocolCoreModules[number]) {
+  return document.sections.find((section) => definition.sectionIds.includes(section.id) || definition.titlePattern.test(section.title))
+}
+
+function usesManagedProtocolTemplate(document: WorkflowDocument): boolean {
+  if (document.role !== 'protocol') return false
+  return document.id === 'agents' || document.sections.some((section) => section.id.startsWith('protocol-'))
 }
 
 function fieldValidationTarget(document: WorkflowDocument, section: WorkflowDocument['sections'][number], fieldId: string): ValidationTarget {
@@ -427,15 +425,16 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     }
   }
 
-  const realtimeDocuments = workflow.documents.filter((document) => document.lifecycle === 'realtime')
+  const realtimeDocuments = realtimeStatusDocuments(workflow)
   if (realtimeDocuments.length === 0) {
     issues.push(
       issue({
-        severity: 'error',
+        severity: 'warning',
         title: '没有实时状态文档',
-        message: '没有 lifecycle 为 realtime 的文档，恢复后可能难以找到当前状态。',
+        message: '未启用实时状态文档；适合静态流程，但持续执行的项目可能难以恢复当前目标和下一步。',
         target: {},
         ruleId: 'recovery-realtime-status',
+        canAccept: true,
       }),
     )
   } else if (realtimeDocuments.length > 1) {
@@ -451,7 +450,17 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     )
   }
 
-  if (!hasFieldId(workflow, (id) => id.includes('next-atomic-step'))) {
+  const nextAtomicStep = resolveNextAtomicStep(workflow)
+  if (!nextAtomicStep.document) {
+    issues.push(issue({
+      severity: 'warning',
+      title: '未配置下一原子步骤',
+      message: '没有状态文档时不会强制下一原子步骤；若工作流需要连续执行，建议启用 STATUS.html。',
+      target: {},
+      ruleId: 'recovery-next-atomic-step-present',
+      canAccept: true,
+    }))
+  } else if (!nextAtomicStep.field) {
     issues.push(
       issue({
         severity: 'error',
@@ -461,7 +470,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         ruleId: 'recovery-next-atomic-step-present',
       }),
     )
-  } else if (!hasNonEmptyFieldId(workflow, (id) => id.includes('next-atomic-step'))) {
+  } else if (!nextAtomicStep.value) {
     issues.push(
       issue({
         severity: 'error',
@@ -498,9 +507,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     }
     const expectedSections = isCurrentStandardPresetDocument(document)
       ? requiredPresetSections[document.filename]
-      : document.role === 'protocol' && workflow.documents.some((item) => item.id.startsWith('content-'))
-        ? modularProtocolSectionIds
-        : undefined
+      : undefined
     if (expectedSections) {
       const existing = new Set(document.sections.map((section) => section.id))
       const missing = expectedSections.filter((sectionId) => !existing.has(sectionId))
@@ -515,20 +522,31 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
           }),
         )
       }
-      if (document.role === 'protocol') {
-        const emptyCoreSections = expectedSections
-          .map((sectionId) => document.sections.find((section) => section.id === sectionId))
-          .filter((section): section is NonNullable<typeof section> => Boolean(section))
-          .filter((section) => !section.fields.some((field) => fieldValueToText(field.value).trim().length > 0))
-        if (emptyCoreSections.length > 0) {
-          issues.push(issue({
-            severity: 'error',
-            title: '入口协议核心模块没有内容',
-            message: `请为以下模块保留至少一个有内容的字段：${emptyCoreSections.map((section) => section.title).join('、')}。`,
-            target: { documentId: document.id, sectionId: emptyCoreSections[0].id },
-            ruleId: 'structure-protocol-core-content',
-          }))
-        }
+    }
+    if (usesManagedProtocolTemplate(document)) {
+      const resolvedCoreModules = protocolCoreModules.map((definition) => ({ definition, section: protocolCoreSection(document, definition) }))
+      const missingCoreModules = resolvedCoreModules.filter((item) => !item.section)
+      if (missingCoreModules.length > 0) {
+        issues.push(issue({
+          severity: 'error',
+          title: '入口协议核心模块缺失',
+          message: `入口协议缺少：${missingCoreModules.map((item) => item.definition.label).join('、')}。`,
+          target: { documentId: document.id },
+          ruleId: 'structure-protocol-core-modules',
+        }))
+      }
+      const emptyCoreSections = resolvedCoreModules
+        .map((item) => item.section)
+        .filter((section): section is NonNullable<typeof section> => Boolean(section))
+        .filter((section) => !section.fields.some((field) => fieldValueToText(field.value).trim().length > 0))
+      if (emptyCoreSections.length > 0) {
+        issues.push(issue({
+          severity: 'error',
+          title: '入口协议核心模块没有内容',
+          message: `请为以下模块保留至少一个有内容的字段：${emptyCoreSections.map((section) => section.title).join('、')}。`,
+          target: { documentId: document.id, sectionId: emptyCoreSections[0].id },
+          ruleId: 'structure-protocol-core-content',
+        }))
       }
     }
     if (document.readPolicy.whenToRead.length === 0) {

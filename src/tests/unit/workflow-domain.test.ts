@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { createCurrentStandardWorkflow, createBlankWorkflow } from '../../data/presets/current-standard-workflow'
+import { createModularWorkflow } from '../../data/modules/standard-workflow-modules'
 import { exportHtmlDocuments } from '../../domain/export-html'
 import { exportMarkdownDocuments, exportReadme } from '../../domain/export-markdown'
 import { createWorkflowZip, packageName } from '../../domain/export-zip'
@@ -111,6 +112,28 @@ describe('Workflow Studio domain model', () => {
     const before = useWorkflowStore.getState().workflow
     const removed = before.documents.find((document) => document.id === 'spec')
     if (!removed) throw new Error('missing plan document fixture')
+    const removedSection = removed.sections[0]
+    const removedField = removedSection.fields[0]
+    const status = before.documents.find((document) => document.id === 'status')
+    if (!status) throw new Error('missing status fixture')
+    before.rules.sourcePriority.push({
+      id: 'field-source-reference',
+      scope: 'field',
+      targetId: removedField.id,
+      orderedSources: [],
+      tieBreaker: 'manual-review',
+      reason: `参见 ${removed.filename}`,
+    })
+    before.acceptedWarnings.push({
+      issueId: 'removed-field-warning',
+      ruleId: 'test-warning',
+      target: { documentId: status.id, sectionId: removedSection.id, fieldId: removedField.id },
+      acceptedAt: new Date().toISOString(),
+      schemaHash: 'test',
+    })
+    status.description = `当前状态依赖 ${removed.filename}`
+    status.sections[0].purpose = `与 ${removed.filename} 对照。`
+    status.sections[0].fields[0].guidance = `不要复制 ${removed.filename}。`
     expect(before.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(true)
     expect(before.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(true)
 
@@ -120,10 +143,13 @@ describe('Workflow Studio domain model', () => {
     expect(workflow.documents.some((document) => document.id === removed.id)).toBe(false)
     expect(workflow.rules.recoveryOrder.some((step) => step.documentId === removed.id)).toBe(false)
     expect(workflow.rules.sourcePriority.some((rule) => rule.targetId === removed.id || rule.orderedSources.some((source) => source.documentId === removed.id))).toBe(false)
+    expect(workflow.rules.sourcePriority.some((rule) => rule.targetId === removedField.id)).toBe(false)
     expect(workflow.rules.updateTriggers.some((trigger) => trigger.targetDocumentId === removed.id)).toBe(false)
     expect(workflow.rules.completionChecks.some((check) => check.relatedDocumentIds.includes(removed.id))).toBe(false)
     expect(workflow.documents.some((document) => document.readPolicy.dependsOnDocumentIds.includes(removed.id))).toBe(false)
     expect(workflow.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).some((field) => fieldValueToText(field.value).includes(removed.filename))).toBe(false)
+    expect(JSON.stringify(workflow.documents)).not.toContain(removed.filename)
+    expect(workflow.acceptedWarnings.some((warning) => warning.target.fieldId === removedField.id || warning.target.sectionId === removedSection.id)).toBe(false)
   })
 
   it('simulates a new session recovery path', () => {
@@ -158,6 +184,8 @@ describe('Workflow Studio domain model', () => {
     expect(html['SPEC.html']).toContain('data-guidance="true"')
     expect(html['SPEC.html']).not.toContain('<script')
     expect(html['SPEC.html']).not.toContain('https://')
+    expect(html['AGENTS.md']).toMatch(/^# /)
+    expect(html['AGENTS.md']).not.toContain('<!doctype html>')
     expect(markdown['SPEC.md']).toContain('### 项目使命')
     expect(markdown['SPEC.md']).toContain('说明：')
   })
@@ -174,7 +202,7 @@ describe('Workflow Studio domain model', () => {
       'documents/STATUS.html',
       'documents/USER.html',
     ])
-    expect(pkg.files['documents/AGENTS.md']).toContain('AGENTS.md -> SPEC.html -> STATUS.html')
+    expect(pkg.files['documents/AGENTS.md']).toContain('AGENTS.md -> STATUS.html -> SPEC.html')
     expect(pkg.files['documents/SPEC.html']).toContain('<!doctype html>')
     expect(pkg.files['documents/AGENTS.html']).toBeUndefined()
   })
@@ -190,8 +218,29 @@ describe('Workflow Studio domain model', () => {
       'STATUS.md',
       'USER.md',
     ])
-    expect(markdown['AGENTS.md']).toContain('AGENTS.md -> SPEC.md -> STATUS.md')
+    expect(markdown['AGENTS.md']).toContain('AGENTS.md -> STATUS.md -> SPEC.md')
     expect(markdown['AGENTS.md']).not.toMatch(/(?:SPEC|STATUS|USER|MEMORY|CONTEXT)\.html/)
+  })
+
+  it('forces the protocol export name and rewrites references in all rendered prose', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const protocol = workflow.documents.find((document) => document.role === 'protocol')
+    const plan = workflow.documents.find((document) => document.role === 'plan')
+    if (!protocol || !plan) throw new Error('missing export projection fixture')
+    protocol.filename = 'ENTRY.html'
+    plan.description = '先参见 STATUS.html。'
+    plan.sections[0].purpose = '本章依赖 STATUS.html。'
+    plan.sections[0].fields[0].guidance = '内容应与 STATUS.html 一致。'
+
+    const markdown = exportMarkdownDocuments(workflow)
+    const readme = exportReadme(workflow, 'markdown')
+
+    expect(markdown['AGENTS.md']).toBeTruthy()
+    expect(markdown['ENTRY.md']).toBeUndefined()
+    expect(markdown['SPEC.md']).toContain('STATUS.md')
+    expect(markdown['SPEC.md']).not.toContain('STATUS.html')
+    expect(readme).toContain('STATUS.md')
+    expect(readme).not.toContain('STATUS.html')
   })
 
   it('round-trips workflow.json and exported ZIP packages', async () => {
@@ -206,6 +255,16 @@ describe('Workflow Studio domain model', () => {
     expect(pkg.files['README.md']).toContain('文件清单')
     expect(exportReadme(workflow)).toContain('推荐读取顺序')
     expect(imported.documents.map((document) => document.filename)).toContain('STATUS.html')
+  })
+
+  it('rejects table rows with undeclared keys or non-string cells', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    const field = workflow.documents[1].sections[0].fields[0]
+    field.value = { kind: 'table', columns: ['name'], rows: [{ name: 7 }] } as never
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/单元格必须是字符串/)
+
+    field.value = { kind: 'table', columns: ['name'], rows: [{ extra: 'value' }] }
+    await expect(parseWorkflowJson(JSON.stringify(workflow))).rejects.toThrow(/键必须来自 columns/)
   })
 
   it('applies packageNamePattern when naming ZIP exports', () => {
@@ -241,12 +300,16 @@ describe('Workflow Studio domain model', () => {
     await expect(createWorkflowZip(workflow)).rejects.toThrow(/导出文件名冲突/)
   })
 
-  it('blocks missing realtime status and missing next atomic step', async () => {
-    const noStatus = createCurrentStandardWorkflow()
-    noStatus.documents = noStatus.documents.filter((document) => document.id !== 'status')
-    noStatus.rules.recoveryOrder = noStatus.rules.recoveryOrder.filter((step) => step.documentId !== 'status')
-    expect(validateWorkflow(noStatus).some((issue) => issue.ruleId === 'recovery-realtime-status' && issue.severity === 'error')).toBe(true)
-    await expect(createWorkflowZip(noStatus)).rejects.toThrow(/导出被阻止/)
+  it('warns when realtime status is intentionally omitted and blocks an empty configured next step', async () => {
+    const noStatus = createModularWorkflow({
+      name: '静态流程',
+      description: '不跟踪运行状态。',
+      selectedDocumentIds: ['spec', 'memory'],
+      firstAction: '读取入口协议。',
+      recoveryRisk: '无持续状态。',
+    })
+    expect(validateWorkflow(noStatus).some((issue) => issue.ruleId === 'recovery-realtime-status' && issue.severity === 'warning')).toBe(true)
+    await expect(createWorkflowZip(noStatus)).resolves.toBeTruthy()
 
     const noNextStep = createCurrentStandardWorkflow()
     const nextStepField = noNextStep.documents.flatMap((document) => document.sections).flatMap((section) => section.fields).find((field) => field.id === 'next-atomic-step')
@@ -267,15 +330,46 @@ describe('Workflow Studio domain model', () => {
     expect(simulateRecovery(workflow, 'new-session').status).toBe('blocked')
   })
 
-  it('blocks recovery simulation when the status entry is missing', () => {
+  it('marks recovery as risky when the optional status entry is missing', () => {
     const workflow = createCurrentStandardWorkflow()
     workflow.documents = workflow.documents.filter((document) => document.id !== 'status')
     workflow.rules.recoveryOrder = workflow.rules.recoveryOrder.filter((step) => step.documentId !== 'status')
 
     const result = simulateRecovery(workflow, 'new-session')
 
-    expect(result.status).toBe('blocked')
-    expect(result.blockers.join('\n')).toMatch(/realtime|下一原子步骤/)
+    expect(result.status).toBe('risky')
+    expect(result.nextAtomicStep).toBeUndefined()
+  })
+
+  it('does not accept a protocol or history field as the next atomic step', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const statusStep = workflow.documents.find((document) => document.role === 'status')
+      ?.sections.flatMap((section) => section.fields)
+      .find((field) => field.id === 'next-atomic-step')
+    const historyField = workflow.documents.find((document) => document.role === 'history')
+      ?.sections.flatMap((section) => section.fields)[0]
+    if (!statusStep || !historyField) throw new Error('missing recovery semantic fixture')
+    statusStep.value = { kind: 'empty' }
+    historyField.id = 'memory-next-atomic-step'
+    historyField.label = '下一原子步骤'
+    historyField.lifecycle = 'realtime'
+    historyField.value = scalarValue('继续执行已经过期的历史动作。')
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-next-atomic-step-value', severity: 'error' }),
+    ]))
+    expect(simulateRecovery(workflow, 'new-session').nextAtomicStep).toBeUndefined()
+  })
+
+  it('blocks deletion of core modules from the managed AGENTS protocol', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const protocol = workflow.documents.find((document) => document.role === 'protocol')
+    if (!protocol) throw new Error('missing protocol fixture')
+    protocol.sections = protocol.sections.filter((section) => section.id !== 'source-priority')
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'structure-protocol-core-modules', severity: 'error' }),
+    ]))
   })
 
   it('applies field-level validation rules', () => {

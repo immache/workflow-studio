@@ -92,14 +92,19 @@
 }
 
 .mode-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: #57554f;
   cursor: pointer;
   font: 600 13px/1 var(--sans);
   padding: 7px 10px;
+  text-decoration: none;
+  touch-action: manipulation;
   white-space: nowrap;
 }
 
@@ -1403,6 +1408,10 @@ h1 {
   white-space: nowrap;
 }
 
+.semantic-unit {
+  white-space: nowrap;
+}
+
 .module-doc-card strong,
 .canvas-section-card h3,
 .protocol-module-card h3,
@@ -1579,8 +1588,11 @@ select:focus-visible,
   outline-offset: 3px;
 }
 
-.builder-step h2:focus {
-  outline: 2px solid transparent;
+.builder-step h2:focus-visible,
+#main-workspace h1:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--focus);
+  outline-offset: 5px;
 }
 
 .metric-grid {
@@ -2164,7 +2176,7 @@ select:focus-visible,
   }
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1120px) {
   .topbar {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -2410,6 +2422,10 @@ select:focus-visible,
 }
 
 @media (max-width: 560px) {
+  .mode-tab {
+    min-height: 44px;
+  }
+
   .document-tab-row {
     grid-template-columns: 1fr;
   }
@@ -2465,6 +2481,11 @@ select:focus-visible,
 
   .mode-home .topbar-actions,
   .mode-home .topbar-status {
+    display: none;
+  }
+
+  .mode-advanced .brand-block,
+  .mode-advanced .topbar-status {
     display: none;
   }
 
@@ -2653,7 +2674,7 @@ select:focus-visible,
   }
 
   .button {
-    min-height: 40px;
+    min-height: 44px;
     padding-inline: 10px;
   }
 

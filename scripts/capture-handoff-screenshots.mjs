@@ -27,7 +27,14 @@ const states = {
     hash: '#build/step-5',
     activeStep: 5,
   },
-  export: { selector: '#export-title', hash: '#advanced' },
+  export: {
+    selector: '#export-title',
+    additionalSelectors: ['iframe.document-preview-frame'],
+    frameSelector: 'iframe.document-preview-frame',
+    frameContentSelector: 'h1',
+    viewportOnly: true,
+    hash: '#advanced/export',
+  },
 }
 
 async function waitForState(page, expected) {
@@ -122,13 +129,15 @@ async function capture(page, viewportName, stateName) {
     await page.locator(expected.frameSelector).scrollIntoViewIfNeeded()
     await page.waitForTimeout(150)
   }
-  await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
+  if (!expected.frameSelector || expected.captureSelector || expected.viewportOnly) {
+    await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
+  }
   await page.waitForTimeout(50)
   const file = `${viewportName}-${stateName}.png`
   if (expected.captureSelector) {
     await page.locator(expected.captureSelector).screenshot({ path: path.join(outputDir, file) })
   } else {
-    await page.screenshot({ path: path.join(outputDir, file), fullPage: true })
+    await page.screenshot({ path: path.join(outputDir, file), fullPage: !expected.viewportOnly })
   }
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
   return metrics(page, `${viewportName}:${stateName}`, expected)

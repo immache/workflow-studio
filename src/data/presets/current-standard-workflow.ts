@@ -193,10 +193,10 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
           createField({
             id: 'read-order',
             label: '读取顺序',
-            guidance: '恢复后按顺序读取协议、稳定计划、状态和按需文档。',
+            guidance: '恢复后先读入口协议和实时状态，再读稳定计划；偏好、历史和术语只在相关时按需读取。',
             lifecycle: 'validation',
             required: true,
-            value: scalarValue('AGENTS.md -> SPEC.html -> STATUS.html -> USER.html(按需) -> MEMORY.html(按需) -> CONTEXT.html(按需)'),
+            value: scalarValue('必读：AGENTS.md -> STATUS.html -> SPEC.html\n按需读取：USER.html（长期偏好影响当前任务时）；MEMORY.html（需要理解项目演变时）；CONTEXT.html（术语不清楚时）'),
           }),
         ]),
         section('source-priority', '来源优先级', '记录信息冲突时的裁决顺序。', 'validation', 2, [
@@ -412,7 +412,10 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
     secondaryFormat: 'markdown',
     documents,
     rules: {
-      recoveryOrder: documents.map((doc, index) => ({
+      recoveryOrder: ['agents', 'status', 'spec', 'user', 'memory', 'context'].map((documentId, index) => ({
+        doc: documents.find((document) => document.id === documentId)!,
+        index,
+      })).map(({ doc, index }) => ({
         id: `recovery-${doc.id}`,
         documentId: doc.id,
         condition: index < 3 ? '恢复时必读' : '按需读取',
