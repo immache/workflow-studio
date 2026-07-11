@@ -490,6 +490,35 @@ test('returns to an existing module canvas without regenerating it', async ({ pa
   expect(confirmationShown).toBe(false)
 })
 
+test('takes the final reviewed document directly into protocol review', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  await markEveryContentDocumentReviewed(page)
+
+  await page.getByRole('button', { name: '继续审查入口协议' }).click()
+
+  await expect(page).toHaveURL(/#build\/step-4$/)
+  await expect(page.getByRole('heading', { name: /审查系统生成的.*入口协议草案/ })).toBeVisible()
+})
+
+test('does not let an incomplete module field bypass review or guided export', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  await markEveryContentDocumentReviewed(page)
+  await selectBuilderDocument(page, 'STATUS.html')
+  await page.locator('.module-builder-step .section-switch').filter({ hasText: '当前目标与下一步' }).click()
+
+  const requiredField = page.locator('.module-section-editor').first().locator('.module-field-editor').nth(1)
+  await expandModuleField(requiredField)
+  await requiredField.getByLabel('当前内容').fill('')
+
+  await expect(page.getByText(/这份文档还有 .* 个必须修复的问题/)).toBeVisible()
+  await expect(page.locator('.document-review-guide .document-reviewed-button')).toBeDisabled()
+  await expect(page.getByRole('button', { name: '生成并审查入口协议草案' })).toBeDisabled()
+
+  await page.evaluate(() => { window.location.hash = '#build/step-6' })
+  await expect(page).toHaveURL(/#build\/step-6$/)
+  await expect(page.getByRole('button', { name: '下载工作流包', exact: true })).toBeDisabled()
+})
+
 test('offers a direct repair path when a rehearsal needs USER.html', async ({ page }) => {
   await buildToModuleCanvas(page)
   await markEveryContentDocumentReviewed(page)
@@ -624,6 +653,34 @@ test('preserves manual protocol content until regeneration is explicitly confirm
   await expandModuleField(firstProtocolField)
   await expect(firstProtocolField.getByLabel('当前内容')).not.toHaveValue(manualProtocolContent)
   await expect(firstProtocolField.getByLabel('当前内容')).toHaveValue(/STATUS\.html/)
+})
+
+test('includes hand-edited protocol content in the guided ZIP export', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  await markEveryContentDocumentReviewed(page)
+  await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
+
+  const manualProtocolContent = '人工确认：导出前先核对当前状态与验收记录。'
+  const protocolField = page.locator('.protocol-review-grid .module-field-editor').first()
+  await expandModuleField(protocolField)
+  await protocolField.getByLabel('当前内容').fill(manualProtocolContent)
+
+  await page.getByRole('button', { name: '查看结果预览' }).click()
+  await page.getByRole('button', { name: '进入演练与导出' }).click()
+  await page.getByRole('button', { name: /演练“新会话”/ }).click()
+  const guidedDownload = page.getByRole('button', { name: '下载工作流包', exact: true })
+  await expect(guidedDownload).toBeEnabled()
+
+  const downloadPromise = page.waitForEvent('download')
+  await guidedDownload.click()
+  const download = await downloadPromise
+  const downloadedPath = await download.path()
+  if (!downloadedPath) throw new Error('missing guided ZIP download path')
+  const zip = await JSZip.loadAsync(await readFile(downloadedPath))
+  const protocol = zip.file('documents/AGENTS.md')
+  if (!protocol) throw new Error('guided ZIP did not include AGENTS.md')
+
+  expect(await protocol.async('string')).toContain(manualProtocolContent)
 })
 
 test('does not silently overwrite AGENTS edits made before the first protocol review', async ({ page }) => {

@@ -1149,6 +1149,10 @@ function BuildWizard({
 
   function markCurrentCanvasDocumentReviewed() {
     if (!canvasDocument || currentDocumentErrors.length > 0) return
+    if (reviewedDocumentIds.has(canvasDocument.id) && !nextUnreviewedDocument) {
+      reviewProtocolDraft()
+      return
+    }
     setReviewedDocumentIds((current) => new Set(current).add(canvasDocument.id))
     if (nextUnreviewedDocument) {
       const completedFilename = canvasDocument.filename
@@ -1161,7 +1165,7 @@ function BuildWizard({
 
   function currentCanvasReviewActionLabel(): string {
     if (!canvasDocument) return '标记这份文档已检查'
-    if (reviewedDocumentIds.has(canvasDocument.id)) return nextUnreviewedDocument ? '打开下一份待检查文档' : '所有内容文档已检查'
+    if (reviewedDocumentIds.has(canvasDocument.id)) return nextUnreviewedDocument ? '打开下一份待检查文档' : '继续审查入口协议'
     return nextUnreviewedDocument ? '检查完成并打开下一份' : '标记这份文档已检查'
   }
 
@@ -1659,7 +1663,9 @@ function BuildWizard({
                         <div className="document-review-guide" aria-label="完成这份文档">
                           <div>
                             <strong>完成这份文档</strong>
-                            <span>{currentDocumentErrors.length > 0
+                            <span>{reviewedDocumentIds.has(canvasDocument.id) && !nextUnreviewedDocument
+                              ? '所有内容文档已检查。现在继续审查入口协议草案。'
+                              : currentDocumentErrors.length > 0
                               ? `先修复 ${currentDocumentErrors.length} 个必须处理的问题，再标记完成。`
                               : '确认名称、职责和需要填写的字段后，即可标记完成。'}</span>
                           </div>
@@ -1669,7 +1675,9 @@ function BuildWizard({
                             disabled={currentDocumentErrors.length > 0}
                             onClick={markCurrentCanvasDocumentReviewed}
                           >
-                            <CheckCircle2 size={16} aria-hidden="true" />
+                            {reviewedDocumentIds.has(canvasDocument.id) && !nextUnreviewedDocument
+                              ? <ArrowRight size={16} aria-hidden="true" />
+                              : <CheckCircle2 size={16} aria-hidden="true" />}
                             {currentCanvasReviewActionLabel()}
                           </button>
                         </div>
