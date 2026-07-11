@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createCurrentStandardWorkflow } from '../../data/presets/current-standard-workflow'
 import {
   createFieldFromModule,
   createModularWorkflow,
@@ -130,6 +131,29 @@ describe('Workflow Studio modular builder', () => {
     expect(zip.files['documents/AGENTS.md']).toBeTruthy()
     expect(zip.files['documents/AGENTS.html']).toBeUndefined()
     expect(zip.files['documents/STATUS.html']).toContain('data-guidance="true"')
+  })
+
+  it('classifies the built-in current workflow sections as standard README modules', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const status = workflow.documents.find((document) => document.role === 'status')
+    if (!status) throw new Error('missing current status fixture')
+    status.sections.push({
+      id: 'custom-delivery-notes',
+      title: '交付备注',
+      purpose: '记录当前项目的交付补充信息。',
+      lifecycle: 'realtime',
+      order: status.sections.length + 1,
+      repeatable: false,
+      fields: [],
+    })
+
+    const readme = exportReadme(workflow)
+    const standardModules = readme.match(/### 标准模块\s*([\s\S]*?)### 自定义模块/)?.[1] ?? ''
+    const customModules = readme.match(/### 自定义模块\s*([\s\S]*)/)?.[1] ?? ''
+
+    expect(standardModules).not.toContain('- 无。')
+    expect(standardModules).toContain(status.sections[0].title)
+    expect(customModules).toContain('交付备注')
   })
 
   it('separates custom modules from standard modules in README summaries', () => {

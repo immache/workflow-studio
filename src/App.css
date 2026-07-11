@@ -1142,6 +1142,27 @@
   line-height: 1.55;
 }
 
+.document-review-guide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.document-review-guide > div {
+  display: grid;
+  gap: 4px;
+}
+
+.document-review-guide span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .document-purpose-field,
 .section-meta-form label:last-child,
 .module-field-form > label:nth-child(2),
@@ -3096,6 +3117,10 @@ select:focus-visible,
 @media (max-width: 560px) {
   .mode-tab {
     min-height: 44px;
+  }
+
+  .document-review-guide {
+    grid-template-columns: 1fr;
   }
 
   .document-tab-row {

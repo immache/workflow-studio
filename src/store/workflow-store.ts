@@ -8,6 +8,7 @@ import {
   createFieldFromModule,
   createModularWorkflow,
   createProtocolDraftDocument,
+  protocolDocumentListContent,
   createRulesForDocuments,
   createSectionFromModule,
   type ContentDocumentId,
@@ -138,6 +139,19 @@ function newId(prefix: string): string {
 
 function touch(workflow: WorkflowSchema): void {
   workflow.updatedAt = new Date().toISOString()
+}
+
+function syncManagedProtocolDocumentList(workflow: Draft<WorkflowSchema>): void {
+  const protocol = workflow.documents.find((document) => document.role === 'protocol')
+  const documentList = protocol?.sections
+    .flatMap((section) => section.fields)
+    .find((field) => field.id === 'protocol-documents')
+  if (!documentList || documentList.defaultValue === undefined) return
+  if (fieldValueToText(documentList.value) !== documentList.defaultValue) return
+
+  const nextContent = protocolDocumentListContent(workflow.documents.filter((document) => document.role !== 'protocol'))
+  documentList.defaultValue = nextContent
+  documentList.value = scalarValue(nextContent)
 }
 
 function canEdit(workflow: WorkflowSchema): boolean {
@@ -636,6 +650,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         }
         Object.assign(document, patch)
         if (patch.lifecycle && !patch.role) document.role = roleByLifecycle[patch.lifecycle]
+        if (document.role !== 'protocol') syncManagedProtocolDocumentList(draft)
         touch(draft)
       }),
     }))
@@ -654,6 +669,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           required: false,
           fallbackStepIds: [],
         })
+        syncManagedProtocolDocumentList(draft)
         touch(draft)
       }),
     }))
@@ -673,6 +689,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           item.order = itemIndex + 1
           item.readPolicy.readOrderHint = itemIndex + 1
         })
+        syncManagedProtocolDocumentList(draft)
         touch(draft)
       }),
     }))
@@ -694,6 +711,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           document.order = index + 1
           document.readPolicy.readOrderHint = index + 1
         })
+        syncManagedProtocolDocumentList(draft)
         touch(draft)
       }),
     }))

@@ -574,9 +574,7 @@ export function createRulesForDocuments(documents: WorkflowDocument[]): Workflow
 }
 
 export function createProtocolDraftDocument(documents: WorkflowDocument[], order = 1, fallbackNextAction = ''): WorkflowDocument {
-  const readableDocs = documents
-    .map((documentItem, index) => `${index + 1}. ${documentItem.filename}：${documentItem.description}`)
-    .join('\n')
+  const readableDocs = protocolDocumentListContent(documents)
   const orderedDocuments = orderedRecoveryDocuments(documents)
   const requiredDocuments = orderedDocuments.filter((documentItem) => documentItem.role === 'status' || documentItem.role === 'plan')
   const onDemandDocuments = orderedDocuments.filter((documentItem) => !requiredDocuments.includes(documentItem))
@@ -615,6 +613,16 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
     }))
   }
 
+  const documentListField = createField({
+    id: 'protocol-documents',
+    label: '文档清单',
+    guidance: '由已选内容文档生成；审查时可修改显示名和职责摘要。',
+    lifecycle: 'validation',
+    required: true,
+    value: scalarValue(readableDocs),
+  })
+  documentListField.defaultValue = readableDocs
+
   return document({
     id: 'agents',
     filename: 'AGENTS.md',
@@ -625,14 +633,7 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
     order,
     sections: [
       section('protocol-doc-list', '文档清单', '串联本工作流包含的内容文档和职责。', 'validation', 1, [
-        createField({
-          id: 'protocol-documents',
-          label: '文档清单',
-          guidance: '由已选内容文档生成；审查时可修改显示名和职责摘要。',
-          lifecycle: 'validation',
-          required: true,
-          value: scalarValue(readableDocs),
-        }),
+        documentListField,
       ]),
       section('protocol-read-order', '读取顺序', '说明未来模型恢复时先读什么、再读什么。', 'validation', 2, recoveryFields),
       section('protocol-source-priority', '来源优先级', '说明冲突时优先相信谁。', 'validation', 3, [
@@ -667,6 +668,12 @@ export function createProtocolDraftDocument(documents: WorkflowDocument[], order
       ]),
     ],
   })
+}
+
+export function protocolDocumentListContent(documents: readonly Pick<WorkflowDocument, 'filename' | 'description'>[]): string {
+  return documents
+    .map((documentItem, index) => `${index + 1}. ${documentItem.filename}：${documentItem.description}`)
+    .join('\n')
 }
 
 export function createModularWorkflow(input: ModularWorkflowInput): WorkflowSchema {

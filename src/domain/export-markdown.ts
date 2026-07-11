@@ -1,8 +1,12 @@
 import { projectDocumentNames, rewriteDocumentReferences, type DocumentNameProjection } from './export-naming'
 import { fieldValueToText, type MaintenanceFormat, type WorkflowDocument, type WorkflowField, type WorkflowSchema } from './schema'
+import { createCurrentStandardWorkflow } from '../data/presets/current-standard-workflow'
 import { sectionModuleLibrary } from '../data/modules/standard-workflow-modules'
 
-const standardSectionModuleIds = new Set(sectionModuleLibrary.map((module) => module.id))
+const standardSectionModuleIds = new Set([
+  ...sectionModuleLibrary.map((module) => module.id),
+  ...createCurrentStandardWorkflow().documents.flatMap((document) => document.sections.map((section) => section.id)),
+])
 
 function isStandardModule(sectionId: string): boolean {
   return sectionId.startsWith('protocol-') || [...standardSectionModuleIds].some((id) => sectionId === id || sectionId.startsWith(`${id}-`))

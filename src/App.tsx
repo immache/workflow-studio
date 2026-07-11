@@ -476,7 +476,7 @@ function ModuleFieldEditor({
   const duplicateField = useWorkflowStore((state) => state.duplicateField)
   const moveField = useWorkflowStore((state) => state.moveField)
   const removeField = useWorkflowStore((state) => state.removeField)
-  const [expanded, setExpanded] = useState(index === 0)
+  const [expanded, setExpanded] = useState(false)
   const location = `${document.filename} > ${section.title} > ${field.label}`
   const fieldText = fieldValueToText(field.value)
   const valueMissing = field.required && !field.allowEmpty && fieldText.trim().length === 0
@@ -910,6 +910,7 @@ function BuildWizard({
   const protocolEditorStartRef = useRef<HTMLElement>(null)
   const builderSimulationResultRef = useRef<HTMLElement>(null)
   const focusFirstActionOnStepRef = useRef(false)
+  const managedBuilderStepFocusRef = useRef<BuildStep | null>(null)
   const draftWorkflowIdRef = useRef(initialDraft.workflowId)
   const skipDraftSaveRef = useRef(false)
   const contentDocuments = useMemo(
@@ -992,6 +993,12 @@ function BuildWizard({
   }
 
   useEffect(() => {
+    if (managedBuilderStepFocusRef.current === null) {
+      managedBuilderStepFocusRef.current = step
+      return
+    }
+    if (managedBuilderStepFocusRef.current === step) return
+    managedBuilderStepFocusRef.current = step
     window.scrollTo({ top: 0, left: 0 })
     const timer = window.setTimeout(() => {
       if (step === 0 && focusFirstActionOnStepRef.current) {
@@ -1138,6 +1145,24 @@ function BuildWizard({
     })
     setLatestWriteTarget(location)
     setGeneratedMessage('改动已保存为本地草稿；请完成后重新标记这份文档为已检查。')
+  }
+
+  function markCurrentCanvasDocumentReviewed() {
+    if (!canvasDocument || currentDocumentErrors.length > 0) return
+    setReviewedDocumentIds((current) => new Set(current).add(canvasDocument.id))
+    if (nextUnreviewedDocument) {
+      const completedFilename = canvasDocument.filename
+      openCanvasDocument(nextUnreviewedDocument, true)
+      setGeneratedMessage(`${completedFilename} 已检查；已自动打开下一份待检查文档 ${nextUnreviewedDocument.filename}。`)
+      return
+    }
+    setGeneratedMessage(`${canvasDocument.filename} 已检查。所有内容文档都已完成，可以生成入口协议草案。`)
+  }
+
+  function currentCanvasReviewActionLabel(): string {
+    if (!canvasDocument) return '标记这份文档已检查'
+    if (reviewedDocumentIds.has(canvasDocument.id)) return nextUnreviewedDocument ? '打开下一份待检查文档' : '所有内容文档已检查'
+    return nextUnreviewedDocument ? '检查完成并打开下一份' : '标记这份文档已检查'
   }
 
   async function createFromDocumentSelection(nextStep: BuildStep = 2) {
@@ -1496,8 +1521,8 @@ function BuildWizard({
                   ? `已选择 ${selectedContentDocs.size} 份内容文档；下一步会生成可编辑的章节和字段。`
                   : '尚未选择内容文档。AGENTS.md 只负责串联规则，不适合独自承载项目状态；至少还要选择 1 份内容文档。'} /></p>
                 {selectedContentDocs.size === 0 ? (
-                  <button type="button" className="button button-ghost" onClick={() => setSelectedContentDocs(new Set<ContentDocumentId>(['status']))}>
-                    采用最小组合：STATUS.html
+                  <button type="button" className="button button-secondary" onClick={() => setSelectedContentDocs(new Set<ContentDocumentId>(['status']))}>
+                    选择最小组合：STATUS.html
                   </button>
                 ) : null}
               </div>
@@ -1523,7 +1548,7 @@ function BuildWizard({
                   type="button"
                   className="button button-primary"
                   onClick={() => void createFromDocumentSelection()}
-                  disabled={isGenerating || (selectedContentDocs.size > 0 && unavailableFirstActionDocuments.length > 0)}
+                  disabled={isGenerating || selectedContentDocs.size === 0 || unavailableFirstActionDocuments.length > 0}
                   aria-describedby={selectedContentDocs.size > 0 && unavailableFirstActionDocuments.length > 0 ? 'first-action-reference-title' : undefined}
                 >
                   生成文档并进入模块画布
@@ -1631,6 +1656,23 @@ function BuildWizard({
                             <dd>{canvasRecoveryStep?.required ? '每次恢复必读' : canvasRecoveryStep ? '条件匹配时按需读取' : '尚未进入恢复路径'}</dd>
                           </div>
                         </dl>
+                        <div className="document-review-guide" aria-label="完成这份文档">
+                          <div>
+                            <strong>完成这份文档</strong>
+                            <span>{currentDocumentErrors.length > 0
+                              ? `先修复 ${currentDocumentErrors.length} 个必须处理的问题，再标记完成。`
+                              : '确认名称、职责和需要填写的字段后，即可标记完成。'}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className={reviewedDocumentIds.has(canvasDocument.id) ? 'button button-secondary document-reviewed-button' : 'button button-primary document-reviewed-button'}
+                            disabled={currentDocumentErrors.length > 0}
+                            onClick={markCurrentCanvasDocumentReviewed}
+                          >
+                            <CheckCircle2 size={16} aria-hidden="true" />
+                            {currentCanvasReviewActionLabel()}
+                          </button>
+                        </div>
                       </section>
                       <section className="module-library-strip" aria-label="推荐章节模块">
                         <div>
@@ -1690,26 +1732,6 @@ function BuildWizard({
                           {currentDocumentErrors.slice(0, 4).map((issue) => <p key={issue.id}>{issue.title}：{issue.message}</p>)}
                         </section>
                       ) : null}
-                      <button
-                        type="button"
-                        className={reviewedDocumentIds.has(canvasDocument.id) ? 'button button-secondary document-reviewed-button' : 'button button-primary document-reviewed-button'}
-                        disabled={currentDocumentErrors.length > 0}
-                        onClick={() => {
-                          setReviewedDocumentIds((current) => new Set(current).add(canvasDocument.id))
-                          if (nextUnreviewedDocument) {
-                            const completedFilename = canvasDocument.filename
-                            openCanvasDocument(nextUnreviewedDocument, true)
-                            setGeneratedMessage(`${completedFilename} 已检查；已自动打开下一份待检查文档 ${nextUnreviewedDocument.filename}。`)
-                          } else {
-                            setGeneratedMessage(`${canvasDocument.filename} 已检查。所有内容文档都已完成，可以生成入口协议草案。`)
-                          }
-                        }}
-                      >
-                        <CheckCircle2 size={16} aria-hidden="true" />
-                        {reviewedDocumentIds.has(canvasDocument.id)
-                          ? nextUnreviewedDocument ? '打开下一份待检查文档' : '所有内容文档已检查'
-                          : nextUnreviewedDocument ? '检查完成并打开下一份' : '标记这份文档已检查'}
-                      </button>
                     </>
                   ) : (
                     <EmptyState title="还没有内容文档" detail="请先选择并生成至少一份内容文档。" actionLabel="返回选择文档" onAction={() => goToStep(1)} />
@@ -3450,6 +3472,7 @@ function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const inspectorReturnFocusRef = useRef<HTMLElement | null>(null)
   const syncingAdvancedViewRef = useRef(false)
+  const managedFocusKeyRef = useRef<string | null>(null)
   const mode = route.mode
   const issues = useMemo(() => validateWorkflow(workflow), [workflow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length
@@ -3461,6 +3484,13 @@ function App() {
   }, [initialize])
 
   useEffect(() => {
+    const focusKey = `${mode}:${activeView}`
+    if (managedFocusKeyRef.current === null) {
+      managedFocusKeyRef.current = focusKey
+      return
+    }
+    if (managedFocusKeyRef.current === focusKey) return
+    managedFocusKeyRef.current = focusKey
     window.scrollTo({ top: 0, left: 0 })
     const timer = window.setTimeout(() => {
       const heading = document.querySelector<HTMLElement>('#main-workspace h1')

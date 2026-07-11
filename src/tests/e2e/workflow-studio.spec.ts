@@ -1,4 +1,4 @@
-import { expect, test, type Dialog, type Page } from '@playwright/test'
+import { expect, test, type Dialog, type Locator, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { readFile } from 'node:fs/promises'
 import JSZip from 'jszip'
@@ -38,6 +38,11 @@ async function selectBuilderDocument(page: Page, filename: string) {
     return
   }
   await page.locator('.document-tab-row .module-doc-card').filter({ hasText: filename }).click()
+}
+
+async function expandModuleField(field: Locator) {
+  if ((await field.getAttribute('open')) !== null) return
+  await field.locator('summary').click()
 }
 
 async function markEveryContentDocumentReviewed(page: Page) {
@@ -151,11 +156,10 @@ test('explains an empty document selection and offers a minimal recovery documen
   }
 
   await expect(page.getByText(/AGENTS\.md 只负责串联规则/)).toBeVisible()
-  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
-  await expect(page.locator('.builder-step .notice')).toContainText('至少选择 1 份内容文档')
+  await expect(page.getByRole('button', { name: '生成文档并进入模块画布' })).toBeDisabled()
   await expect(page).toHaveURL(/#build\/step-2$/)
 
-  await page.getByRole('button', { name: '采用最小组合：STATUS.html' }).click()
+  await page.getByRole('button', { name: '选择最小组合：STATUS.html' }).click()
   const statusCheckbox = page.getByLabel(/STATUS\.html/)
   await expect(statusCheckbox).toBeChecked()
   await expect.poll(() => statusCheckbox.evaluate((element) => getComputedStyle(element).accentColor)).toBe('rgb(217, 119, 87)')
@@ -164,9 +168,9 @@ test('explains an empty document selection and offers a minimal recovery documen
 test('keeps the active route when using the skip link', async ({ page }) => {
   await page.goto('/#build/step-3')
   const skipLink = page.getByRole('link', { name: '跳到主工作区' })
-  await skipLink.focus()
+  await page.keyboard.press('Tab')
   await expect(skipLink).toBeFocused()
-  await skipLink.press('Enter')
+  await page.keyboard.press('Enter')
 
   await expect(page).toHaveURL(/#build\/step-3$/)
   await expect(page.locator('#main-workspace h1')).toBeFocused()
@@ -322,6 +326,7 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await firstSection.getByLabel('这一章负责什么').fill('提供恢复后可以立即执行的目标和唯一下一步。')
 
   const firstField = firstSection.locator('.module-field-editor').first()
+  await expandModuleField(firstField)
   await firstField.getByLabel('字段名称').fill('本轮交付目标')
   await firstField.getByLabel('常驻说明').fill('只保留当前仍有效且可验证的交付目标。')
   await expect(firstField.getByLabel('当前内容')).toHaveAttribute('placeholder', '填写“本轮交付目标”的当前内容…')
@@ -334,7 +339,9 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   const fieldCountBeforeCopy = await firstSection.locator('.module-field-editor').count()
   await firstField.getByRole('button', { name: '复制字段 本轮交付目标' }).click()
   await expect(firstSection.locator('.module-field-editor')).toHaveCount(fieldCountBeforeCopy + 1)
-  await expect(firstSection.locator('.module-field-editor').nth(1).getByLabel('字段名称')).toHaveValue('本轮交付目标 副本')
+  const copiedField = firstSection.locator('.module-field-editor').nth(1)
+  await expandModuleField(copiedField)
+  await expect(copiedField.getByLabel('字段名称')).toHaveValue('本轮交付目标 副本')
 
   await firstSection.locator('.field-library-band .module-choice-button').filter({ hasText: '证据或验证方式' }).click()
   const addedPresetField = firstSection.locator('.field-library-band .module-choice-button').filter({ hasText: '证据或验证方式（已加入）' })
@@ -350,6 +357,7 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await expect(protocolSwitches).toHaveCount(5)
   await expect(protocolModule).toHaveCount(1)
   await expect(protocolModule.getByLabel('章节名称')).toHaveValue('文档清单')
+  await expandModuleField(protocolModule.locator('.module-field-editor').first())
   await expect(protocolModule.getByLabel('当前内容')).toHaveValue(/USER\.html[\s\S]*MEMORY\.html[\s\S]*CONTEXT\.html/)
   await expect(protocolModule.getByRole('button', { name: '上移章节 文档清单' })).toBeDisabled()
   await expect(protocolModule.getByRole('button', { name: '下移章节 文档清单' })).toBeVisible()
@@ -466,6 +474,7 @@ test('allows a static workflow to omit STATUS.html and generates conditional rea
 test('returns to an existing module canvas without regenerating it', async ({ page }) => {
   await buildToModuleCanvas(page)
   const firstField = page.locator('.module-section-editor').first().locator('.module-field-editor').first()
+  await expandModuleField(firstField)
   await firstField.getByLabel('当前内容').fill('回到文档选择后仍应保留这段内容。')
   await page.getByRole('button', { name: '返回文档选择' }).click()
   await expect(page).toHaveURL(/#build\/step-2$/)
@@ -475,7 +484,9 @@ test('returns to an existing module canvas without regenerating it', async ({ pa
   await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
 
   await expect(page).toHaveURL(/#build\/step-3$/)
-  await expect(page.locator('.module-section-editor').first().locator('.module-field-editor').first().getByLabel('当前内容')).toHaveValue('回到文档选择后仍应保留这段内容。')
+  const restoredField = page.locator('.module-section-editor').first().locator('.module-field-editor').first()
+  await expandModuleField(restoredField)
+  await expect(restoredField.getByLabel('当前内容')).toHaveValue('回到文档选择后仍应保留这段内容。')
   expect(confirmationShown).toBe(false)
 })
 
@@ -576,6 +587,7 @@ test('preserves manual protocol content until regeneration is explicitly confirm
 
   const manualProtocolContent = '手工协议内容：先核对人工确认，再读取 STATUS.html。'
   const firstProtocolField = page.locator('.protocol-review-grid .module-field-editor').first()
+  await expandModuleField(firstProtocolField)
   await firstProtocolField.getByLabel('当前内容').fill(manualProtocolContent)
   await expect(page.getByText('协议修改已保存。系统不会自动重生成并覆盖这些内容。')).toBeVisible()
 
@@ -584,7 +596,8 @@ test('preserves manual protocol content until regeneration is explicitly confirm
   await page.getByRole('button', { name: '进入入口协议审查' }).click()
   await expect(page.locator('.protocol-builder-step')).toBeVisible()
   await expect(page.getByText('已保留当前入口协议草案，没有覆盖导入或手工修改。请继续审查各模块。')).toBeVisible()
-  await expect(page.locator('.protocol-review-grid .module-field-editor').first().getByLabel('当前内容')).toHaveValue(manualProtocolContent)
+  await expandModuleField(firstProtocolField)
+  await expect(firstProtocolField.getByLabel('当前内容')).toHaveValue(manualProtocolContent)
 
   const regenerateButton = page.getByRole('button', { name: '重新生成草案' })
   let dismissedDialogs = 0
@@ -596,7 +609,7 @@ test('preserves manual protocol content until regeneration is explicitly confirm
   await regenerateButton.click()
   await expect.poll(() => dismissedDialogs).toBe(2)
   page.off('dialog', dismissRegeneration)
-  await expect(page.locator('.protocol-review-grid .module-field-editor').first().getByLabel('当前内容')).toHaveValue(manualProtocolContent)
+  await expect(firstProtocolField.getByLabel('当前内容')).toHaveValue(manualProtocolContent)
 
   let acceptedDialogs = 0
   const acceptRegeneration = async (dialog: Dialog) => {
@@ -608,8 +621,9 @@ test('preserves manual protocol content until regeneration is explicitly confirm
   await expect.poll(() => acceptedDialogs).toBe(2)
   page.off('dialog', acceptRegeneration)
   await expect(page.getByText('入口协议和恢复规则已重新生成；之前的手工修改已被替换。')).toBeVisible()
-  await expect(page.locator('.protocol-review-grid .module-field-editor').first().getByLabel('当前内容')).not.toHaveValue(manualProtocolContent)
-  await expect(page.locator('.protocol-review-grid .module-field-editor').first().getByLabel('当前内容')).toHaveValue(/STATUS\.html/)
+  await expandModuleField(firstProtocolField)
+  await expect(firstProtocolField.getByLabel('当前内容')).not.toHaveValue(manualProtocolContent)
+  await expect(firstProtocolField.getByLabel('当前内容')).toHaveValue(/STATUS\.html/)
 })
 
 test('does not silently overwrite AGENTS edits made before the first protocol review', async ({ page }) => {
@@ -628,7 +642,9 @@ test('does not silently overwrite AGENTS edits made before the first protocol re
   })
   await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
   await expect(page.locator('.protocol-builder-step')).toBeVisible()
-  await expect(page.locator('.protocol-review-grid .module-field-editor').first().getByLabel('当前内容')).toHaveValue(manualProtocolContent)
+  const protocolField = page.locator('.protocol-review-grid .module-field-editor').first()
+  await expandModuleField(protocolField)
+  await expect(protocolField.getByLabel('当前内容')).toHaveValue(manualProtocolContent)
 })
 
 test('keeps the active builder step visible without horizontal page overflow on mobile', async ({ page }, testInfo) => {
@@ -652,7 +668,7 @@ test('keeps the active builder step visible without horizontal page overflow on 
   await expectActiveBuildStepFullyVisible(page, 3)
   await expect(page.getByLabel('写入地图')).toBeVisible()
   await expect(page.locator('.canvas-section-list .module-section-editor')).toHaveCount(1)
-  await expect(page.locator('.canvas-section-list .module-field-editor[open]')).toHaveCount(1)
+  await expect(page.locator('.canvas-section-list .module-field-editor[open]')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(5000)
 
   await markEveryContentDocumentReviewed(page)
@@ -661,7 +677,7 @@ test('keeps the active builder step visible without horizontal page overflow on 
   await expectActiveBuildStepFullyVisible(page, 4)
   await expect(page.getByLabel('写入地图')).toBeVisible()
   await expect(page.locator('.protocol-review-grid .module-section-editor')).toHaveCount(1)
-  await expect(page.locator('.protocol-review-grid .module-field-editor[open]')).toHaveCount(1)
+  await expect(page.locator('.protocol-review-grid .module-field-editor[open]')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(4000)
 
   await page.getByRole('button', { name: '查看结果预览' }).click()

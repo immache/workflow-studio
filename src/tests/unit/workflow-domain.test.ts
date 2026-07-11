@@ -165,6 +165,43 @@ describe('Workflow Studio domain model', () => {
     }
   })
 
+  it('syncs an untouched generated protocol document list when a content document changes', async () => {
+    await useWorkflowStore.getState().createModularProject({
+      name: '协议同步测试',
+      description: '验证文档职责会同步到入口协议。',
+      selectedDocumentIds: ['status', 'spec'],
+      firstAction: '先读取 STATUS.html，再确认下一原子步骤。',
+      recoveryRisk: '文档职责与入口协议摘要不同步。',
+    })
+    const before = useWorkflowStore.getState().workflow
+    const status = before.documents.find((document) => document.role === 'status')
+    const protocol = before.documents.find((document) => document.role === 'protocol')
+    const documentList = protocol?.sections.flatMap((section) => section.fields).find((field) => field.id === 'protocol-documents')
+    if (!status || !protocol || !documentList) throw new Error('missing modular protocol fixture')
+
+    useWorkflowStore.getState().updateDocument(status.id, {
+      filename: 'NOW.html',
+      description: '只记录这一轮仍有效的目标、证据与下一步。',
+    })
+    const syncedList = useWorkflowStore.getState().workflow.documents
+      .find((document) => document.id === protocol.id)
+      ?.sections.flatMap((section) => section.fields)
+      .find((field) => field.id === 'protocol-documents')
+    if (!syncedList) throw new Error('missing synced protocol list')
+
+    expect(fieldValueToText(syncedList.value)).toContain('NOW.html：只记录这一轮仍有效的目标、证据与下一步。')
+    expect(syncedList.defaultValue).toBe(fieldValueToText(syncedList.value))
+
+    useWorkflowStore.getState().updateFieldText(protocol.id, 'protocol-doc-list', 'protocol-documents', '这是经过人工审查的自定义清单。')
+    useWorkflowStore.getState().updateDocument(status.id, { description: '这次职责修改不应覆盖人工清单。' })
+    const preservedList = useWorkflowStore.getState().workflow.documents
+      .find((document) => document.id === protocol.id)
+      ?.sections.flatMap((section) => section.fields)
+      .find((field) => field.id === 'protocol-documents')
+
+    expect(fieldValueToText(preservedList?.value ?? { kind: 'empty' })).toBe('这是经过人工审查的自定义清单。')
+  })
+
   it('rewrites every structured filename reference when the store renames a document', async () => {
     await useWorkflowStore.getState().createPresetProject()
     const before = useWorkflowStore.getState().workflow
