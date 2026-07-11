@@ -2690,7 +2690,7 @@ function RulesEditor() {
   const removeCompletionCheck = useWorkflowStore((state) => state.removeCompletionCheck)
   const updateConflictPolicy = useWorkflowStore((state) => state.updateConflictPolicy)
   const updateHistoryPolicy = useWorkflowStore((state) => state.updateHistoryPolicy)
-  const sourceRule = workflow.rules.sourcePriority[0]
+  const sourceRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
 
   return (
     <section className="workspace-section" aria-labelledby="rules-title">

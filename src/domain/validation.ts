@@ -338,39 +338,48 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     }
   }
 
-  if (workflow.rules.sourcePriority.length === 0) {
+  const globalSourceRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+  if (!globalSourceRule) {
     issues.push(
       issue({
-        severity: 'warning',
-        title: '缺少来源优先级',
-        message: '目标冲突时没有明确裁决规则，建议至少配置全局来源优先级。',
+        severity: 'error',
+        title: '缺少全局来源优先级',
+        message: '目标冲突和状态过期只能依据 scope 为 global 的来源规则裁决。请添加一条全局来源优先级。',
         target: {},
-        ruleId: 'recovery-source-priority-present',
-        canAccept: true,
+        ruleId: 'recovery-global-source-priority-present',
       }),
     )
   } else {
-    const globalRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global') ?? workflow.rules.sourcePriority[0]
-    const priorities = globalRule.orderedSources.map((source) => source.priority)
-    if (duplicateValues(priorities.map(String)).length > 0) {
+    const priorities = globalSourceRule.orderedSources.map((source) => source.priority)
+    if (globalSourceRule.orderedSources.length === 0) {
       issues.push(
         issue({
-          severity: 'warning',
-          title: '来源优先级重复',
-          message: '同一来源优先级规则中存在重复 priority，排序可能不稳定。',
-          target: { ruleId: globalRule.id },
-          ruleId: 'recovery-source-priority-order',
-          canAccept: true,
+          severity: 'error',
+          title: '全局来源优先级为空',
+          message: '请至少添加一个全局来源，才能在目标冲突或状态过期时完成裁决。',
+          target: { ruleId: globalSourceRule.id },
+          ruleId: 'recovery-global-source-priority-non-empty',
         }),
       )
     }
-    if (globalRule.orderedSources[0]?.sourceType !== 'latest-user-instruction') {
+    if (priorities.some((priority, index) => priority !== index + 1)) {
+      issues.push(
+        issue({
+          severity: 'error',
+          title: '全局来源优先级顺序无效',
+          message: '全局来源的 priority 必须从 1 开始连续递增，并与当前显示顺序一致。',
+          target: { ruleId: globalSourceRule.id },
+          ruleId: 'recovery-global-source-priority-sequence',
+        }),
+      )
+    }
+    if (globalSourceRule.orderedSources[0]?.sourceType !== 'latest-user-instruction') {
       issues.push(
         issue({
           severity: 'warning',
           title: '最高来源不是用户指令',
           message: '建议把最新明确用户指令放在全局来源优先级第一位。',
-          target: { ruleId: globalRule.id },
+          target: { ruleId: globalSourceRule.id },
           ruleId: 'recovery-source-priority-user-first',
           canAccept: true,
         }),

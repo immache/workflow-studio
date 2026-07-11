@@ -6,6 +6,7 @@ import {
   scalarValue,
   type DocumentRole,
   type InformationLifecycle,
+  type SourceRef,
   type WorkflowDocument,
   type WorkflowSchema,
   type WorkflowSection,
@@ -490,6 +491,16 @@ export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSch
     ?.sections.find((sectionItem) => sectionItem.id === 'recovery')
     ?.fields.find((field) => field.id === 'recovery-order')
   if (recoveryField) recoveryField.value = scalarValue(recoveryText)
+  const sourcePriority: SourceRef[] = [
+    { sourceType: 'latest-user-instruction', label: '最新明确用户指令', priority: 1, recencyPolicy: 'prefer-newer' },
+    { sourceType: 'workspace-fact', label: '新鲜工作区事实', priority: 2, recencyPolicy: 'prefer-newer' },
+  ]
+  for (const documentItem of documents.filter((item) => item.role === 'status')) {
+    sourcePriority.push({ sourceType: 'current-status', label: documentItem.filename, documentId: documentItem.id, priority: sourcePriority.length + 1, recencyPolicy: 'prefer-newer' })
+  }
+  for (const documentItem of documents.filter((item) => item.role === 'plan')) {
+    sourcePriority.push({ sourceType: 'stable-plan', label: documentItem.filename, documentId: documentItem.id, priority: sourcePriority.length + 1, recencyPolicy: 'ignore-recency' })
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     workflowId: `workflow-${Date.now()}`,
@@ -504,10 +515,16 @@ export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSch
         id: `recovery-${documentItem.id}`,
         documentId: documentItem.id,
         condition: documentItem.role === 'history' ? '理解项目演变时读取' : '恢复时读取',
-        required: documentItem.role !== 'context',
+        required: documentItem.role !== 'context' && documentItem.role !== 'history',
         fallbackStepIds: [],
       })),
-      sourcePriority: [],
+      sourcePriority: [{
+        id: 'global-source-priority',
+        scope: 'global',
+        orderedSources: sourcePriority,
+        tieBreaker: 'explicit-user-confirmation',
+        reason: '先以最新明确用户指令和新鲜工作区事实裁决；状态或计划仅在其职责范围内作为补充来源。',
+      }],
       updateTriggers: [
         ...documents.map((documentItem) => ({
           id: `trigger-${documentItem.id}`,

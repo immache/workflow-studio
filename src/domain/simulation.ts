@@ -10,6 +10,9 @@ const recoveryBlockingRules = new Set([
   'recovery-document-coverage',
   'recovery-next-atomic-step-present',
   'recovery-next-atomic-step-value',
+  'recovery-global-source-priority-present',
+  'recovery-global-source-priority-non-empty',
+  'recovery-global-source-priority-sequence',
 ])
 
 const scenarioLabels: Record<SimulationScenario, string> = {
@@ -25,7 +28,7 @@ const scenarioLabels: Record<SimulationScenario, string> = {
 }
 
 function globalSourcePriorityRule(workflow: WorkflowSchema) {
-  return workflow.rules.sourcePriority.find((rule) => rule.scope === 'global') ?? workflow.rules.sourcePriority[0]
+  return workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
 }
 
 export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationScenario): SimulationResult {
@@ -88,9 +91,14 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
       (document.role === 'context' && scenario === 'unclear-term') ||
       (document.role === 'history' && (scenario === 'insufficient-history' || scenario === 'handoff-after-failure'))
     )
+    const isStaleStatusCheck = scenario === 'stale-status' && document.role === 'status' && document.lifecycle === 'realtime'
     steps.push({
       order: steps.length + 1,
-      action: shouldRead ? `读取 ${document.filename}` : `按需跳过 ${document.filename}`,
+      action: shouldRead
+        ? isStaleStatusCheck
+          ? `读取 ${document.filename}，仅用于识别过期状态`
+          : `读取 ${document.filename}`
+        : `按需跳过 ${document.filename}`,
       documentId: document.id,
       reason: recoveryStep.condition,
       outcome: shouldRead ? 'read' : 'skip',
@@ -119,7 +127,7 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
 
   if (scenario === 'goal-conflict') {
     const sourceRule = globalSourcePriorityRule(workflow)
-    if (!sourceRule) {
+    if (!sourceRule || sourceRule.orderedSources.length === 0) {
       blockers.push('缺少来源优先级规则，无法裁决目标冲突。')
       steps.push({
         order: steps.length + 1,
@@ -154,10 +162,15 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
     } else {
       const sourceRule = globalSourcePriorityRule(workflow)
       const selectedSource = sourceRule?.orderedSources[0]
-      const sourceAvailable = makeSourceAvailable(selectedSource, `状态过期时仍按全局来源优先级读取“${selectedSource?.label ?? '未配置来源'}”。`)
+      const sourceAvailable = Boolean(sourceRule && sourceRule.orderedSources.length > 0) && makeSourceAvailable(selectedSource, `状态过期时忽略 ${statusDocument.filename} 的过期状态，改按全局来源优先级读取“${selectedSource?.label ?? '未配置来源'}”。`)
+      if (!sourceRule || sourceRule.orderedSources.length === 0) {
+        blockers.push('缺少可用的全局来源优先级，无法在状态过期时完成裁决。')
+      }
       steps.push({
         order: steps.length + 1,
-        action: `核对 ${statusDocument.filename} 与全局最高优先级来源`,
+        action: sourceAvailable
+          ? `忽略 ${statusDocument.filename} 的过期状态，按来源优先级选择 ${selectedSource?.label ?? '最高优先级来源'}`
+          : `无法替代 ${statusDocument.filename} 的过期状态`,
         documentId: statusDocument.id,
         reason: sourceRule?.reason ?? '缺少全局来源优先级。',
         outcome: sourceAvailable ? 'conflict' : 'blocked',

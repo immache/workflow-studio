@@ -391,3 +391,13 @@ export function normalizeSourcePriority(rule: SourcePriorityRule): SourcePriorit
     })),
   }
 }
+
+export function normalizeWorkflowSourcePriorities(workflow: WorkflowSchema): WorkflowSchema {
+  return {
+    ...workflow,
+    rules: {
+      ...workflow.rules,
+      sourcePriority: workflow.rules.sourcePriority.map(normalizeSourcePriority),
+    },
+  }
+}

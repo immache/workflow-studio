@@ -129,6 +129,10 @@ describe('Workflow Studio domain model', () => {
     nextAtomicStep.value = scalarValue('继续完善状态快照中的当前目标。')
 
     expect(validateWorkflow(workflow).filter((issue) => issue.severity === 'error')).toHaveLength(0)
+    expect(simulateRecovery(workflow, 'new-session')).toMatchObject({
+      status: 'pass',
+      readDocuments: ['AGENTS.md', 'STATUS.html'],
+    })
     await expect(createWorkflowZip(workflow)).resolves.toMatchObject({
       files: expect.objectContaining({
         'workflow.json': expect.any(String),
@@ -357,6 +361,26 @@ describe('Workflow Studio domain model', () => {
     expect(result.conflicts[0]?.resolution).toBe('resolved')
   })
 
+  it('requires an explicit global source rule for conflict simulations', () => {
+    const workflow = createCurrentStandardWorkflow()
+    workflow.rules.sourcePriority = [{
+      id: 'field-only-source-rule',
+      scope: 'field',
+      targetId: workflow.documents[0].sections[0].fields[0].id,
+      orderedSources: [{ sourceType: 'memory-history', label: 'MEMORY.html', documentId: 'memory', priority: 1, recencyPolicy: 'manual' }],
+      tieBreaker: 'manual-review',
+      reason: '仅适用于一个字段。',
+    }]
+
+    expect(validateWorkflow(workflow)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'recovery-global-source-priority-present', severity: 'error' }),
+    ]))
+    expect(simulateRecovery(workflow, 'goal-conflict')).toMatchObject({
+      status: 'blocked',
+      blockers: expect.arrayContaining([expect.stringContaining('全局来源优先级')]),
+    })
+  })
+
   it('reads a document-backed winning source before resolving a goal conflict', () => {
     const workflow = createCurrentStandardWorkflow()
     const sourceRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
@@ -458,6 +482,23 @@ describe('Workflow Studio domain model', () => {
     expect(pkg.files['README.md']).toContain('文件清单')
     expect(exportReadme(workflow)).toContain('推荐读取顺序')
     expect(imported.documents.map((document) => document.filename)).toContain('STATUS.html')
+  })
+
+  it('normalizes global source priorities during import and export', async () => {
+    const workflow = createCurrentStandardWorkflow()
+    const globalRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+    if (!globalRule) throw new Error('missing global source-priority fixture')
+    globalRule.orderedSources.forEach((source, index) => {
+      source.priority = 100 - index * 3
+    })
+
+    const imported = await parseWorkflowJson(JSON.stringify(workflow))
+    const importedRule = imported.rules.sourcePriority.find((rule) => rule.scope === 'global')
+    const exported = JSON.parse(serializeWorkflowJson(workflow)) as WorkflowSchema
+    const exportedRule = exported.rules.sourcePriority.find((rule) => rule.scope === 'global')
+
+    expect(importedRule?.orderedSources.map((source) => source.priority)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(exportedRule?.orderedSources.map((source) => source.priority)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
   })
 
   it('rejects duplicate IDs in every imported rule collection', async () => {
@@ -822,6 +863,39 @@ describe('Workflow Studio domain model', () => {
       selectedSource: { documentId: 'memory' },
     })
     expect(result.readDocuments).toContain('MEMORY.html')
+    expect(result.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: '读取 STATUS.html，仅用于识别过期状态' }),
+      expect.objectContaining({ action: '忽略 STATUS.html 的过期状态，按来源优先级选择 MEMORY.html' }),
+    ]))
+  })
+
+  it('edits the global source rule even when a field rule appears first', async () => {
+    await useWorkflowStore.getState().createPresetProject()
+    const workflow = useWorkflowStore.getState().workflow
+    const globalRule = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+    if (!globalRule) throw new Error('missing global source-priority fixture')
+    useWorkflowStore.setState({
+      workflow: {
+        ...workflow,
+        rules: {
+          ...workflow.rules,
+          sourcePriority: [{
+            id: 'field-first-source-rule',
+            scope: 'field',
+            targetId: workflow.documents[0].sections[0].fields[0].id,
+            orderedSources: [],
+            tieBreaker: 'manual-review',
+            reason: '字段规则不应被全局编辑器修改。',
+          }, ...workflow.rules.sourcePriority],
+        },
+      },
+    })
+
+    useWorkflowStore.getState().updateSourcePriorityReason('更新全局来源裁决说明。')
+    const updated = useWorkflowStore.getState().workflow
+
+    expect(updated.rules.sourcePriority.find((rule) => rule.scope === 'global')?.reason).toBe('更新全局来源裁决说明。')
+    expect(updated.rules.sourcePriority.find((rule) => rule.scope === 'field')?.reason).toBe('字段规则不应被全局编辑器修改。')
   })
 
   it('rejects empty entity IDs and unsupported custom predicates', () => {

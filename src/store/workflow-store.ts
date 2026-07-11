@@ -424,11 +424,25 @@ function removeDocumentReferences(workflow: Draft<WorkflowSchema>, documentId: s
 }
 
 function defaultSourcePriority(workflow: WorkflowSchema): SourceRef[] {
-  return workflow.rules.sourcePriority[0]?.orderedSources ?? [
+  return workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')?.orderedSources ?? [
     { sourceType: 'latest-user-instruction', label: '最新明确用户指令', priority: 1, recencyPolicy: 'prefer-newer' },
     { sourceType: 'workspace-fact', label: '新鲜工作区事实', priority: 2, recencyPolicy: 'prefer-newer' },
     { sourceType: 'stable-plan', label: '稳定计划', priority: 3, recencyPolicy: 'ignore-recency' },
   ]
+}
+
+function ensureGlobalSourcePriorityRule(workflow: WorkflowSchema): SourcePriorityRule {
+  const existing = workflow.rules.sourcePriority.find((rule) => rule.scope === 'global')
+  if (existing) return existing
+  const rule: SourcePriorityRule = {
+    id: 'global-source-priority',
+    scope: 'global',
+    orderedSources: defaultSourcePriority(workflow).map((source, index) => ({ ...source, priority: index + 1 })),
+    tieBreaker: 'explicit-user-confirmation',
+    reason: '按来源优先级裁决冲突。',
+  }
+  workflow.rules.sourcePriority.push(rule)
+  return rule
 }
 
 function resequenceSources(rule: SourcePriorityRule): void {
@@ -988,17 +1002,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
-        if (draft.rules.sourcePriority.length === 0) {
-          draft.rules.sourcePriority.push({
-            id: 'global-source-priority',
-            scope: 'global',
-            orderedSources: defaultSourcePriority(draft),
-            tieBreaker: 'explicit-user-confirmation',
-            reason,
-          })
-        } else {
-          draft.rules.sourcePriority[0].reason = reason
-        }
+        ensureGlobalSourcePriorityRule(draft).reason = reason
         touch(draft)
       }),
     }))
@@ -1008,16 +1012,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
-        if (draft.rules.sourcePriority.length === 0) {
-          draft.rules.sourcePriority.push({
-            id: 'global-source-priority',
-            scope: 'global',
-            orderedSources: defaultSourcePriority(draft),
-            tieBreaker: 'explicit-user-confirmation',
-            reason: '按来源优先级裁决冲突。',
-          })
-        }
-        const rule = draft.rules.sourcePriority[0]
+        const rule = ensureGlobalSourcePriorityRule(draft)
         const source = rule.orderedSources[index]
         if (!source) return
         Object.assign(source, patch)
@@ -1031,16 +1026,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
-        if (draft.rules.sourcePriority.length === 0) {
-          draft.rules.sourcePriority.push({
-            id: 'global-source-priority',
-            scope: 'global',
-            orderedSources: [],
-            tieBreaker: 'manual-review',
-            reason: '按来源优先级裁决冲突。',
-          })
-        }
-        const rule = draft.rules.sourcePriority[0]
+        const rule = ensureGlobalSourcePriorityRule(draft)
         rule.orderedSources.push({
           sourceType: 'workspace-fact',
           label: '新来源',
@@ -1057,8 +1043,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
-        const rule = draft.rules.sourcePriority[0]
-        if (!rule) return
+        const rule = ensureGlobalSourcePriorityRule(draft)
         const target = index + direction
         if (index < 0 || target < 0 || target >= rule.orderedSources.length) return
         const [source] = rule.orderedSources.splice(index, 1)
@@ -1073,8 +1058,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     if (!canEdit(get().workflow)) return
     set((state) => ({
       workflow: produce(state.workflow, (draft) => {
-        const rule = draft.rules.sourcePriority[0]
-        if (!rule) return
+        const rule = ensureGlobalSourcePriorityRule(draft)
         rule.orderedSources.splice(index, 1)
         resequenceSources(rule)
         touch(draft)

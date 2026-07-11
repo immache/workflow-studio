@@ -5,6 +5,7 @@ import {
   HISTORY_STATUSES,
   SCHEMA_VERSION,
   createField,
+  normalizeWorkflowSourcePriorities,
   scalarValue,
   type FieldValue,
   type WorkflowSchema,
@@ -420,12 +421,13 @@ export async function parseWorkflowJson(text: string): Promise<WorkflowSchema> {
   }
   const parsed: unknown = migrateWorkflowSchema(raw)
   assertWorkflowShape(parsed)
-  const issues = validateWorkflow(parsed)
+  const normalized = normalizeWorkflowSourcePriorities(parsed as WorkflowSchema)
+  const issues = validateWorkflow(normalized)
   const blocking = issues.find((issue) => issue.severity === 'error')
   if (blocking) {
     throw new Error(`导入校验失败：${blocking.title}`)
   }
-  return { ...parsed, workflowId: `workflow-${Date.now()}`, updatedAt: new Date().toISOString() }
+  return { ...normalized, workflowId: `workflow-${Date.now()}`, updatedAt: new Date().toISOString() }
 }
 
 export async function parseImportedWorkflow(file: File, options: ImportOptions = {}): Promise<WorkflowSchema> {

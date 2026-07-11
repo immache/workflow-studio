@@ -1,7 +1,7 @@
 import JSZip from 'jszip'
 import { exportDocumentsForFormat } from './export-documents'
 import { exportReadme } from './export-markdown'
-import type { WorkflowSchema } from './schema'
+import { normalizeWorkflowSourcePriorities, type WorkflowSchema } from './schema'
 import { hasBlockingErrors, validateWorkflow } from './validation'
 
 export type ExportPackage = {
@@ -24,24 +24,25 @@ function assertExportableVersion(workflow: WorkflowSchema): void {
 
 export function serializeWorkflowJson(workflow: WorkflowSchema): string {
   assertExportableVersion(workflow)
-  return JSON.stringify(workflow, null, 2)
+  return JSON.stringify(normalizeWorkflowSourcePriorities(workflow), null, 2)
 }
 
 export async function createWorkflowZip(workflow: WorkflowSchema): Promise<ExportPackage> {
   assertExportableVersion(workflow)
-  const issues = validateWorkflow(workflow)
+  const normalizedWorkflow = normalizeWorkflowSourcePriorities(workflow)
+  const issues = validateWorkflow(normalizedWorkflow)
   const blocking = issues.find((issue) => issue.severity === 'error')
   if (hasBlockingErrors(issues)) {
     throw new Error(`导出被阻止：${blocking?.title ?? '存在未解决 Error'}`)
   }
   const zip = new JSZip()
   const files: Record<string, string> = {
-    'workflow.json': serializeWorkflowJson(workflow),
-    'README.md': exportReadme(workflow, workflow.maintenanceFormat),
+    'workflow.json': serializeWorkflowJson(normalizedWorkflow),
+    'README.md': exportReadme(normalizedWorkflow, normalizedWorkflow.maintenanceFormat),
   }
-  const primary = exportDocumentsForFormat(workflow, workflow.maintenanceFormat)
-  const secondary = workflow.secondaryFormat ? exportDocumentsForFormat(workflow, workflow.secondaryFormat) : {}
-  const secondaryDir = workflow.secondaryFormat === 'html' ? 'documents-html' : 'documents-md'
+  const primary = exportDocumentsForFormat(normalizedWorkflow, normalizedWorkflow.maintenanceFormat)
+  const secondary = normalizedWorkflow.secondaryFormat ? exportDocumentsForFormat(normalizedWorkflow, normalizedWorkflow.secondaryFormat) : {}
+  const secondaryDir = normalizedWorkflow.secondaryFormat === 'html' ? 'documents-html' : 'documents-md'
 
   for (const [name, content] of Object.entries(primary)) {
     files[`documents/${name}`] = content
