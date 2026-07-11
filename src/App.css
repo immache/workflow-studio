@@ -684,6 +684,7 @@
   width: auto;
   min-height: auto;
   margin-top: 3px;
+  accent-color: var(--accent);
 }
 
 .material-card span {
@@ -1269,8 +1270,12 @@
 }
 
 .module-section-editor {
-  gap: 18px;
-  padding: 20px;
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  padding: 24px 0;
+  border-block: 1px solid var(--line);
+  background: transparent;
 }
 
 .module-editor-heading {
@@ -3338,7 +3343,8 @@ select:focus-visible,
   }
 
   .module-section-editor {
-    padding: 16px;
+    gap: 16px;
+    padding: 18px 0;
   }
 
   .canvas-document-head {

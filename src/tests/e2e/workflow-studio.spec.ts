@@ -156,7 +156,9 @@ test('explains an empty document selection and offers a minimal recovery documen
   await expect(page).toHaveURL(/#build\/step-2$/)
 
   await page.getByRole('button', { name: '采用最小组合：STATUS.html' }).click()
-  await expect(page.getByLabel(/STATUS\.html/)).toBeChecked()
+  const statusCheckbox = page.getByLabel(/STATUS\.html/)
+  await expect(statusCheckbox).toBeChecked()
+  await expect.poll(() => statusCheckbox.evaluate((element) => getComputedStyle(element).accentColor)).toBe('rgb(217, 119, 87)')
 })
 
 test('keeps the active route when using the skip link', async ({ page }) => {
@@ -167,7 +169,7 @@ test('keeps the active route when using the skip link', async ({ page }) => {
   await skipLink.press('Enter')
 
   await expect(page).toHaveURL(/#build\/step-3$/)
-  await expect(page.locator('#main-workspace')).toBeFocused()
+  await expect(page.locator('#main-workspace h1')).toBeFocused()
   await expect(page.locator('.module-builder-step')).toBeVisible()
 })
 
@@ -310,6 +312,7 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await expect(writeLocationSegments).toHaveText(['STATUS.html', '文档职责'])
 
   const moduleCanvas = page.locator('.module-canvas')
+  await expect(moduleCanvas.locator('.module-section-editor.canvas-section-card')).toHaveCount(0)
   const documentMeta = moduleCanvas.locator('.canvas-document-head')
   await documentMeta.getByLabel('显示名').fill('交付状态快照')
   await documentMeta.getByLabel('这份文档只负责什么').fill('只记录本轮仍有效的目标、验证证据和下一原子步骤。')

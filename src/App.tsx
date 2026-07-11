@@ -614,7 +614,7 @@ function ModuleSectionEditor({
   }
 
   return (
-    <article className="canvas-section-card module-section-editor">
+    <article className="module-section-editor">
       <div className="module-editor-heading section-editor-heading">
         <span className="kicker">章节 {index + 1}</span>
         <div className="module-icon-actions" aria-label={`${section.title} 章节操作`}>
@@ -929,11 +929,11 @@ function BuildWizard({
   const canvasSection = canvasDocument?.sections.find((section) => section.id === selectedCanvasSectionId) ?? canvasDocument?.sections[0]
   const protocolSection = protocolDocument?.sections.find((section) => section.id === selectedProtocolSectionId) ?? protocolDocument?.sections[0]
   const validationIssues = useMemo(() => validateWorkflow(workflow), [workflow])
-  const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, 'html'), [workflow])
   const packagedPrimaryDocs = useMemo(
     () => exportDocumentsForFormat(workflow, workflow.maintenanceFormat),
     [workflow],
   )
+  const primaryDocs = packagedPrimaryDocs
   const packagedSecondaryDocs = useMemo(
     () => workflow.secondaryFormat ? exportDocumentsForFormat(workflow, workflow.secondaryFormat) : {},
     [workflow],
@@ -2067,9 +2067,16 @@ function TopBar({ issueCount, onOpenInspector, mode, onModeChange }: { issueCoun
     event.preventDefault()
     const target = document.getElementById('main-workspace')
     if (!target) return
-    target.tabIndex = -1
-    target.scrollIntoView({ block: 'start' })
-    target.focus({ preventScroll: true })
+    const heading = target.querySelector<HTMLElement>('h1, h2')
+    if (!heading) {
+      target.tabIndex = -1
+      target.scrollIntoView({ block: 'start' })
+      target.focus({ preventScroll: true })
+      return
+    }
+    heading.tabIndex = -1
+    heading.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
+    heading.focus({ preventScroll: true })
   }
 
   async function handleImport(file: File | undefined) {
