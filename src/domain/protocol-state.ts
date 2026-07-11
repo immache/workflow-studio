@@ -14,6 +14,7 @@ import {
 } from './schema'
 
 const PROTOCOL_GENERATOR_VERSION = '1' as const
+const PROTOCOL_TEMPLATE_REVISION = 'compact-agents-2' as const
 
 function ordered<T extends { id: string; order: number }>(items: readonly T[]): T[] {
   return [...items].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
@@ -129,6 +130,7 @@ export function canonicalProtocolSource(workflow: Pick<WorkflowSchema, 'name' | 
   }))
   return stableJson({
     generatorVersion: PROTOCOL_GENERATOR_VERSION,
+    templateRevision: PROTOCOL_TEMPLATE_REVISION,
     name: workflow.name,
     description: workflow.description,
     documents,
@@ -163,7 +165,7 @@ function defaultRules(documents: readonly ContentDocument[], protocolId: string)
   }
   return {
     recoveryOrder: [
-      { id: `recovery-${protocolId}`, documentId: protocolId, condition: '恢复时先读取入口协议。', required: true, fallbackStepIds: [] },
+      { id: `recovery-${protocolId}`, documentId: protocolId, condition: '开始工作或恢复上下文时先读取入口协议。', required: true, fallbackStepIds: [] },
       ...orderedDocuments.map((document, index) => ({
         id: `recovery-${document.id}`,
         documentId: document.id,
@@ -207,20 +209,23 @@ function defaultRules(documents: readonly ContentDocument[], protocolId: string)
 }
 
 function documentList(documents: readonly ContentDocument[]): string {
-  return ordered(documents).map((document, index) => `${index + 1}. ${document.filename}：${document.description}`).join('\n')
+  return [
+    'AGENTS.md：规定各文档职责、读取顺序、来源优先级、更新规则和交付前检查。',
+    ...ordered(documents).map((document) => `${document.filename}：${document.description}`),
+  ].join('\n')
 }
 
 function readOrder(rules: WorkflowRules, documents: readonly ContentDocument[]): string {
   const byId = new Map(documents.map((document) => [document.id, document.filename]))
-  return rules.recoveryOrder.map((step, index) => {
+  return rules.recoveryOrder.map((step) => {
     const filename = step.documentId === 'protocol-system' ? 'AGENTS.md' : byId.get(step.documentId) ?? step.documentId
-    return `${index + 1}. ${filename}：${step.condition}`
+    return step.required ? filename : `${filename}（按需）`
   }).join('\n')
 }
 
 function sourcePriority(rules: WorkflowRules): string {
   return rules.sourcePriority.find((rule) => rule.scope === 'global')?.orderedSources
-    .map((source, index) => `${index + 1}. ${source.label}`).join('\n') ?? ''
+    .map((source) => source.label).join('\n') ?? ''
 }
 
 function updateRules(rules: WorkflowRules, documents: readonly ContentDocument[]): string {
@@ -229,7 +234,7 @@ function updateRules(rules: WorkflowRules, documents: readonly ContentDocument[]
 }
 
 function completionChecks(rules: WorkflowRules): string {
-  return rules.completionChecks.map((check, index) => `${index + 1}. ${check.label}：${check.description}`).join('\n')
+  return rules.completionChecks.map((check) => `${check.label}：${check.description}`).join('\n')
 }
 
 export function canGenerateSystemProtocol(workflow: Pick<WorkflowSchema, 'documents'>): boolean {
@@ -245,34 +250,34 @@ export function createSystemProtocolBundle(workflow: Pick<WorkflowSchema, 'docum
     document: {
       id: protocolId,
       filename: 'AGENTS.md',
-      title: '入口协议',
+      title: 'AGENTS.md',
       role: 'protocol',
       lifecycle: 'validation',
-      description: '由已确认的内容文档、章节和信息项生成的恢复入口协议。',
-      readPolicy: { whenToRead: ['恢复、交接或不确定下一步时先读取。'], dependsOnDocumentIds: [], readOrderHint: 1 },
+      description: '由已确认文档生成的工作入口协议。',
+      readPolicy: { whenToRead: ['开始工作、恢复上下文或怀疑信息过期时先读取。'], dependsOnDocumentIds: [], readOrderHint: 1 },
       updatePolicy: { updateTriggers: ['内容文档结构变化后重新生成。'], replacementMode: 'replace-current', staleInfoHandling: 'remove' },
       order: 1,
       required: true,
       sections: [
         {
-          id: 'protocol-document-list', title: '文档清单', purpose: '说明每份内容文档保存什么。', lifecycle: 'validation', order: 1, repeatable: false,
-          fields: [createField({ id: 'protocol-document-list-value', label: '包含的文档', guidance: '由文档名称和职责自动生成。', lifecycle: 'validation', value: scalarValue(documentList(documents)), displayFormat: 'bullet-list' })],
+          id: 'protocol-document-list', title: '文档职责', purpose: '列出每份文档负责的信息。', lifecycle: 'validation', order: 1, repeatable: false,
+          fields: [createField({ id: 'protocol-document-list-value', label: '文档职责', guidance: '根据已选文档及其职责生成。', lifecycle: 'validation', value: scalarValue(documentList(documents)), displayFormat: 'bullet-list' })],
         },
         {
-          id: 'protocol-read-order', title: '读取顺序', purpose: '说明模型始终该读什么、信什么、接着做什么。', lifecycle: 'validation', order: 2, repeatable: false,
-          fields: [createField({ id: 'protocol-read-order-value', label: '恢复时怎么读', guidance: '由文档职责和当前顺序自动生成。', lifecycle: 'validation', value: scalarValue(readOrder(rules, documents)), displayFormat: 'steps' })],
+          id: 'protocol-read-order', title: '读取顺序', purpose: '规定开始工作或恢复上下文时的读取顺序。', lifecycle: 'validation', order: 2, repeatable: false,
+          fields: [createField({ id: 'protocol-read-order-value', label: '读取顺序', guidance: '根据文档顺序和是否必读生成。', lifecycle: 'validation', value: scalarValue(readOrder(rules, documents)), displayFormat: 'steps' })],
         },
         {
-          id: 'protocol-source-priority', title: '来源优先级', purpose: '说明信息冲突时采用的默认裁决顺序。', lifecycle: 'validation', order: 3, repeatable: false,
-          fields: [createField({ id: 'protocol-source-priority-value', label: '冲突时先信什么', guidance: '由已选文档的职责自动生成。', lifecycle: 'validation', value: scalarValue(sourcePriority(rules)), displayFormat: 'bullet-list' })],
+          id: 'protocol-source-priority', title: '来源优先级', purpose: '规定信息冲突时的裁决顺序。', lifecycle: 'validation', order: 3, repeatable: false,
+          fields: [createField({ id: 'protocol-source-priority-value', label: '来源优先级', guidance: '根据工作区事实和文档职责生成。', lifecycle: 'validation', value: scalarValue(sourcePriority(rules)), displayFormat: 'steps' })],
         },
         {
-          id: 'protocol-update-rules', title: '维护规则', purpose: '说明职责范围内的信息变化后应如何维护。', lifecycle: 'validation', order: 4, repeatable: false,
-          fields: [createField({ id: 'protocol-update-rules-value', label: '何时更新', guidance: '由内容文档的职责自动生成。', lifecycle: 'validation', value: scalarValue(updateRules(rules, documents)), displayFormat: 'bullet-list' })],
+          id: 'protocol-update-rules', title: '更新规则', purpose: '规定信息变化后应更新哪份文档。', lifecycle: 'validation', order: 4, repeatable: false,
+          fields: [createField({ id: 'protocol-update-rules-value', label: '更新规则', guidance: '根据各文档职责和信息生命周期生成。', lifecycle: 'validation', value: scalarValue(updateRules(rules, documents)), displayFormat: 'bullet-list' })],
         },
         {
-          id: 'protocol-completion', title: '完成检查', purpose: '说明交付前需要完成的最小核对。', lifecycle: 'validation', order: 5, repeatable: false,
-          fields: [createField({ id: 'protocol-completion-value', label: '交付前核对', guidance: '由系统生成的完成检查组成。', lifecycle: 'validation', value: scalarValue(completionChecks(rules)), displayFormat: 'bullet-list' })],
+          id: 'protocol-completion', title: '交付前检查', purpose: '规定交付前必须完成的最小检查。', lifecycle: 'validation', order: 5, repeatable: false,
+          fields: [createField({ id: 'protocol-completion-value', label: '交付前检查', guidance: '根据当前完成规则生成。', lifecycle: 'validation', value: scalarValue(completionChecks(rules)), displayFormat: 'bullet-list' })],
         },
       ],
     },

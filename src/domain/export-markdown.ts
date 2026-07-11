@@ -36,7 +36,22 @@ function renderValue(field: WorkflowField, value: string): string {
   return value
 }
 
+function renderSystemProtocolDocument(document: WorkflowDocument, projection: DocumentNameProjection): string {
+  const rewrite = (text: string) => rewriteDocumentReferences(text, projection)
+  const lines = ['# AGENTS.md', '']
+  for (const section of document.sections) {
+    const values = section.fields
+      .map((field) => ({ field, value: rewrite(fieldValueToText(field.value)) }))
+      .filter(({ value }) => value.trim().length > 0)
+      .map(({ field, value }) => renderValue(field, value))
+    if (values.length === 0) continue
+    lines.push(`## ${rewrite(section.title)}`, '', values.join('\n\n'), '')
+  }
+  return `${lines.join('\n').trimEnd()}\n`
+}
+
 export function renderMarkdownDocument(document: WorkflowDocument, projection: DocumentNameProjection): string {
+  if (document.id === 'protocol-system') return renderSystemProtocolDocument(document, projection)
   const outputFilename = projection.byDocumentId.get(document.id) ?? document.filename
   const rewrite = (text: string) => rewriteDocumentReferences(text, projection)
   const lines = [`# ${rewrite(document.title)}`, '', `文件名：\`${outputFilename}\``, `职责：\`${document.role}\``, '', rewrite(document.description), '']

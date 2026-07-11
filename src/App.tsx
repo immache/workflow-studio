@@ -721,7 +721,7 @@ function ResultPreviewStep({ workflow, protocolConfirmed, onReviewProtocol, onNe
         </aside>
         {selectedDocument ? <section className="document-reading-preview" aria-labelledby="reading-preview-title">
           <div className="reading-preview-heading"><div><p className="micro-label">阅读版预览</p><h3 id="reading-preview-title">{selectedDocument.title}</h3><p>{selectedDocument.description}</p></div><code>{selectedFilename}</code></div>
-          {format === 'html' ? <TemplateDocumentPreview document={selectedDocument} /> : <pre className="markdown-preview">{visibleOutput}</pre>}
+          {format === 'html' ? <TemplateDocumentPreview document={selectedDocument} /> : <pre className="markdown-preview" tabIndex={0} aria-label={`${selectedFilename} Markdown 内容`}>{visibleOutput}</pre>}
         </section> : null}
       </div>
     </> : <div className="empty-protocol"><p>入口协议尚不可用，因此无法生成完整的结果预览。</p><button type="button" className="button secondary" onClick={onReviewProtocol}>回到协议审查</button></div>}
@@ -730,9 +730,22 @@ function ResultPreviewStep({ workflow, protocolConfirmed, onReviewProtocol, onNe
 }
 
 function TemplateDocumentPreview({ document }: { document: WorkflowDocument }) {
-  return <div className="template-document-preview">
-    {document.sections.map((section) => <section key={section.id}><h4>{section.title}</h4><p className="preview-purpose">{section.purpose}</p>{section.fields.map((field) => <div className="template-preview-field" key={field.id}><h5>{field.label}</h5><p>{field.guidance}</p><TemplateEmptySlot format={field.displayFormat} /></div>)}</section>)}
+  const protocol = document.id === 'protocol-system'
+  return <div className={protocol ? 'template-document-preview protocol-document-preview' : 'template-document-preview'}>
+    {document.sections.map((section) => <section key={section.id}>
+      <h4>{section.title}</h4>
+      {!protocol ? <p className="preview-purpose">{section.purpose}</p> : null}
+      {section.fields.map((field) => protocol
+        ? <TemplatePreviewValue key={field.id} field={field} />
+        : <div className="template-preview-field" key={field.id}><h5>{field.label}</h5><p>{field.guidance}</p><TemplatePreviewValue field={field} /></div>)}
+    </section>)}
   </div>
+}
+
+function TemplatePreviewValue({ field }: { field: WorkflowField }) {
+  return fieldValueToText(field.value).trim()
+    ? <div className="template-preview-value"><DisplayValue field={field} /></div>
+    : <TemplateEmptySlot format={field.displayFormat} />
 }
 
 function TemplateEmptySlot({ format }: { format: DisplayFormatId | undefined }) {

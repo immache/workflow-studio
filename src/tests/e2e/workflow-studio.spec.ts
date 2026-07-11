@@ -77,7 +77,28 @@ test('generates a protocol, previews files, rehearses a template, and exports JS
 
   await expect(page.getByRole('heading', { name: '查看模型以后会读到的资料。' })).toBeVisible()
   await expect(page.locator('.result-document')).toHaveCount(3)
+  await expect.poll(() => page.locator('.result-document').first().evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return rect.left >= 0 && rect.right <= document.documentElement.clientWidth
+  })).toBe(true)
   await expect(page.getByText('JSON 或 ZIP 才是可重新导入编辑的事实源。')).toBeVisible()
+  const agentsButton = page.locator('.result-document').filter({ hasText: 'AGENTS.md' })
+  await agentsButton.click()
+  const htmlProtocolPreview = page.locator('.protocol-document-preview')
+  await expect(htmlProtocolPreview).toContainText('文档职责')
+  await expect(htmlProtocolPreview).toContainText('读取顺序')
+  await expect(htmlProtocolPreview).toContainText('STATUS.html')
+  await expect(htmlProtocolPreview.locator('.empty-slot, .empty-slot-list')).toHaveCount(0)
+
+  await page.locator('.result-document').last().click()
+  await expect(page.locator('.template-document-preview')).toContainText('下一次开始时先做什么')
+  await expect(page.locator('.template-document-preview').locator('.empty-slot-list')).toHaveCount(1)
+
+  await agentsButton.click()
+  await page.getByRole('radio', { name: 'Markdown 阅读版' }).check()
+  await expect(page.locator('.markdown-preview')).toContainText('## 文档职责')
+  await expect(page.locator('.markdown-preview')).toContainText('STATUS.md')
+  await expect(page.locator('.markdown-preview')).not.toContainText('文件名：')
   await expectNoSeriousAxeViolations(page)
   await page.getByRole('button', { name: '演练并导出' }).click()
 
@@ -250,8 +271,10 @@ test('keeps the blank workflow path usable without pointer input', async ({ page
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: '开始搭建资料内容' }).focus()
   await page.keyboard.press('Enter')
-  await page.locator('.document-tab').last().focus()
+  const customTab = page.locator('.document-tab').last()
+  await customTab.focus()
   await page.keyboard.press('Enter')
+  await expect(customTab).toHaveClass(/active/)
   await page.getByRole('button', { name: '新增信息项' }).focus()
   await page.keyboard.press('Enter')
 
@@ -266,16 +289,19 @@ test('keeps the blank workflow path usable without pointer input', async ({ page
   await field.getByRole('radio', { name: /按步骤写/ }).focus()
   await page.keyboard.press('Space')
   await expect(field.getByRole('radio', { name: /按步骤写/ })).toBeChecked()
+  await expect(customTab).toContainText('1 项')
 
   await page.getByRole('button', { name: '审查入口协议' }).focus()
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: '生成入口协议' }).focus()
   await page.keyboard.press('Enter')
   const confirmation = page.getByRole('checkbox', { name: '我已核对资料、读取顺序和完成检查。' })
+  await expect(confirmation).toBeEnabled()
   await confirmation.focus()
   await page.keyboard.press('Space')
   await page.getByRole('button', { name: '确认入口协议并查看结果' }).focus()
   await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { name: '查看模型以后会读到的资料。' })).toBeVisible()
   await page.getByRole('button', { name: '演练并导出' }).focus()
   await page.keyboard.press('Enter')
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { createCurrentStandardWorkflow } from '../../data/presets/current-standard-workflow'
 import { createModularWorkflow } from '../../data/modules/standard-workflow-modules'
-import { buildProtocolProjection, sha256Hex, toPersistedWorkflow, withRegeneratedSystemProtocol } from '../../domain/protocol-state'
+import { buildProtocolProjection, normalizeWorkflowForRuntime, sha256Hex, toPersistedWorkflow, withRegeneratedSystemProtocol } from '../../domain/protocol-state'
 import { exportHtmlDocuments } from '../../domain/export-html'
 import { exportMarkdownDocuments } from '../../domain/export-markdown'
 import { createWorkflowZip, serializeWorkflowJson } from '../../domain/export-zip'
@@ -159,6 +159,50 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(markdown['STATUS.md']).toContain('<!-- workflow-value: empty -->')
     expect(JSON.parse(zip.files['workflow.json']).rules).toBeUndefined()
     expect(zip.files['documents/STATUS.html']).not.toContain('未填写')
+  })
+
+  it('exports the generated AGENTS.md as five compact rule sections', async () => {
+    const workflow = createModularWorkflow({
+      name: '精简协议测试',
+      description: '验证系统入口协议只保留工作时需要的规则。',
+      selectedDocumentIds: ['status'],
+      firstAction: '继续检查结果预览。',
+      recoveryRisk: '入口协议混入搭建阶段说明。',
+    })
+    const htmlAgents = exportHtmlDocuments(workflow)['AGENTS.md']
+    const markdownAgents = exportMarkdownDocuments(workflow)['AGENTS.md']
+    const zip = await createWorkflowZip(workflow)
+
+    expect(htmlAgents.match(/^## .+$/gm)).toEqual([
+      '## 文档职责',
+      '## 读取顺序',
+      '## 来源优先级',
+      '## 更新规则',
+      '## 交付前检查',
+    ])
+    expect(htmlAgents).toContain('STATUS.html')
+    expect(markdownAgents).toContain('STATUS.md')
+    expect(htmlAgents).not.toMatch(/文件名：|职责：`|说明：|### /)
+    expect(htmlAgents).not.toContain('由已确认文档生成的工作入口协议')
+    expect(zip.files['documents/AGENTS.md']).toBe(htmlAgents)
+  })
+
+  it('appends only user-authored protocol supplements after the five core sections', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const persisted = toPersistedWorkflow(workflow)
+    persisted.protocolState.supplements.push({
+      id: 'supplement-review',
+      title: '自定义审查要求',
+      instruction: '交付前由读者核对自定义约束。',
+      displayFormat: 'paragraph',
+    })
+    const supplemented = normalizeWorkflowForRuntime(persisted)
+    const agents = exportHtmlDocuments(supplemented)['AGENTS.md']
+
+    expect(agents).toContain('## 自定义审查要求')
+    expect(agents).toContain('交付前由读者核对自定义约束。')
+    expect(agents).not.toContain('## 自定义项')
+    expect(agents.match(/^## .+$/gm)).toHaveLength(6)
   })
 
   it('renders the three beginner display formats as distinct HTML and Markdown structures', () => {
