@@ -6,6 +6,7 @@ import {
   emptyValue,
   scalarValue,
   type CompletionCheck,
+  type ContentDocument,
   type DocumentRole,
   type DisplayFormatId,
   type FieldType,
@@ -431,10 +432,11 @@ function sectionsForCard(card: StandardDocumentCard): WorkflowSection[] {
   })
 }
 
-export function createContentDocument(cardId: ContentDocumentId, order: number): WorkflowDocument {
+export function createContentDocument(cardId: ContentDocumentId, order: number): ContentDocument {
   const card = standardDocumentCards.find((item) => item.id === cardId)
   if (!card) throw new Error(`未知内容文档：${cardId}`)
-  return document({
+  if (card.role === 'protocol') throw new Error('内容文档不能使用 protocol 角色')
+  const created = document({
     id: `content-${card.id}`,
     filename: card.filename,
     title: card.title,
@@ -444,6 +446,7 @@ export function createContentDocument(cardId: ContentDocumentId, order: number):
     order,
     sections: sectionsForCard(card),
   })
+  return { ...created, role: card.role }
 }
 
 function sourceRefsForDocuments(documents: WorkflowDocument[]): SourceRef[] {

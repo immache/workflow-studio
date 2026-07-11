@@ -190,19 +190,20 @@ export function simulateRecovery(workflow: WorkflowSchema, scenario: SimulationS
   }
 
   const nextAtomicStep = resolveNextAtomicStep(workflow, readDocumentIds).value
-  if (!nextAtomicStep && hasRealtimeStatus) {
+  const templateNextStepSlot = workflow.mode === 'template' && hasRealtimeStatus && !nextAtomicStep
+  if (!nextAtomicStep && hasRealtimeStatus && !templateNextStepSlot) {
     blockers.push('本次实际读取的文档中没有可执行的下一原子步骤。')
   }
   steps.push({
     order: steps.length + 1,
-    action: '推导下一原子步骤',
-    reason: scenarioLabels[scenario],
+    action: templateNextStepSlot ? '确认模板保留下一原子步骤空槽' : '推导下一原子步骤',
+    reason: templateNextStepSlot ? '模板阶段不填写项目运行事实；实际使用时在状态资料中填写。' : scenarioLabels[scenario],
     outcome: blockers.length > 0 ? 'blocked' : 'complete',
   })
 
   return {
     scenario,
-    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') || !hasRealtimeStatus || !nextAtomicStep ? 'risky' : 'pass',
+    status: blockers.length > 0 ? 'blocked' : steps.some((step) => step.outcome === 'conflict') || !hasRealtimeStatus || (!nextAtomicStep && !templateNextStepSlot) ? 'risky' : 'pass',
     steps,
     readDocuments,
     conflicts,

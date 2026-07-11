@@ -8,6 +8,7 @@ import { exportMarkdownDocuments } from '../../domain/export-markdown'
 import { createWorkflowZip, serializeWorkflowJson } from '../../domain/export-zip'
 import { parseImportedWorkflow, parseWorkflowJson } from '../../domain/import-export'
 import { validateWorkflow } from '../../domain/validation'
+import { simulateRecovery } from '../../domain/simulation'
 import { useWorkflowStore } from '../../store/workflow-store'
 
 function legacyV10() {
@@ -147,6 +148,15 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(zip.files['documents/STATUS.html']).not.toContain('未填写')
   })
 
+  it('treats an empty next-step field as a template slot during recovery rehearsal', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const result = simulateRecovery(workflow, 'new-session')
+
+    expect(result.status).toBe('pass')
+    expect(result.blockers).not.toContain('本次实际读取的文档中没有可执行的下一原子步骤。')
+    expect(result.steps.at(-1)).toMatchObject({ action: '确认模板保留下一原子步骤空槽', outcome: 'complete' })
+  })
+
   it('uses workflow.json as the only editable ZIP source and leaves HTML imports unchanged', async () => {
     const workflow = createCurrentStandardWorkflow()
     const zip = new JSZip()
@@ -165,7 +175,7 @@ describe('Workflow Studio 1.1 data semantics', () => {
 
     await useWorkflowStore.getState().importProject(new File(['{"schemaVersion":"1.1.0"}'], 'broken.json', { type: 'application/json' }))
 
-    expect(useWorkflowStore.getState().workflow.workflowId).toBe(current.workflowId)
+    expect(useWorkflowStore.getState().workflow?.workflowId).toBe(current.workflowId)
     expect(useWorkflowStore.getState().storageMessage).toMatch(/导入失败/)
   })
 })

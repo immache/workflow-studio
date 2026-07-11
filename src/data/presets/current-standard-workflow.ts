@@ -3,6 +3,7 @@ import {
   DEFAULT_SCORING_SETTINGS,
   SCHEMA_VERSION,
   createField,
+  emptyProtocolState,
   emptyValue,
   scalarValue,
   type DocumentRole,
@@ -586,6 +587,26 @@ export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSch
         obsoleteHandling: 'mark-obsolete',
       },
     },
+    exportSettings: DEFAULT_EXPORT_SETTINGS,
+    scoringSettings: DEFAULT_SCORING_SETTINGS,
+    acceptedWarnings: [],
+  })
+}
+
+export function createEmptyTemplateWorkflow(name = '未命名工作流', description = '从空白开始设计文档、章节和信息项。'): WorkflowSchema {
+  const createdAt = now()
+  return normalizeWorkflowForRuntime({
+    schemaVersion: SCHEMA_VERSION,
+    workflowId: `workflow-${Date.now()}`,
+    name,
+    description,
+    createdAt,
+    updatedAt: createdAt,
+    maintenanceFormat: 'html',
+    secondaryFormat: 'markdown',
+    mode: 'template',
+    documents: [],
+    protocolState: emptyProtocolState(),
     exportSettings: DEFAULT_EXPORT_SETTINGS,
     scoringSettings: DEFAULT_SCORING_SETTINGS,
     acceptedWarnings: [],
