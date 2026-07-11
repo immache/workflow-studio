@@ -25,8 +25,9 @@ function markdownTable(value: string): string {
 }
 
 function renderValue(field: WorkflowField, value: string): string {
-  if (!value.trim()) return '未填写'
+  if (!value.trim()) return '<!-- workflow-value: empty -->'
   const lines = valueLines(value)
+  if (field.displayFormat === 'bullet-list') return lines.map((line) => `- ${line.replace(/^[-*]\s*/, '')}`).join('\n')
   if (field.displayFormat === 'checklist') return lines.map((line) => `- [ ] ${line.replace(/^[-*]\s*/, '')}`).join('\n')
   if (field.displayFormat === 'steps') return lines.map((line, index) => `${index + 1}. ${line.replace(/^\d+[.)、]\s*/, '')}`).join('\n')
   if (field.displayFormat === 'code') return `\`\`\`text\n${value}\n\`\`\``

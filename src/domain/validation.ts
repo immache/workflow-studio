@@ -188,6 +188,16 @@ export function warningSchemaHash(workflow: WorkflowSchema, target: ValidationTa
 
 export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
   const issues: ValidationIssue[] = []
+  for (const diagnostic of workflow.protocolProjection?.diagnostics ?? []) {
+    issues.push(issue({
+      id: diagnostic.id,
+      severity: diagnostic.severity,
+      title: diagnostic.title,
+      message: diagnostic.message,
+      target: {},
+      ruleId: diagnostic.id,
+    }))
+  }
   if (workflow.documents.length === 0) {
     issues.push(
       issue({
@@ -544,7 +554,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
         ruleId: 'recovery-next-atomic-step-present',
       }),
     )
-  } else if (!nextAtomicStep.value) {
+  } else if (!nextAtomicStep.value && workflow.mode !== 'template') {
     issues.push(
       issue({
         severity: 'error',
@@ -686,7 +696,7 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
           }),
         )
       }
-      if (field.required && !field.allowEmpty && isFieldEmpty(field)) {
+      if (workflow.mode !== 'template' && field.required && !field.allowEmpty && isFieldEmpty(field)) {
         issues.push(
           issue({
             severity: 'error',

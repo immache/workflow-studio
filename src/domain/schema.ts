@@ -1,9 +1,11 @@
-export const SCHEMA_VERSION = '1.0.0'
+export const SCHEMA_VERSION = '1.1.0'
+export const LEGACY_SCHEMA_VERSION = '1.0.0'
 
 export type MaintenanceFormat = 'html' | 'markdown'
 
 export type DisplayFormatId =
   | 'paragraph'
+  | 'bullet-list'
   | 'checklist'
   | 'steps'
   | 'key-value'
@@ -30,6 +32,8 @@ export type DocumentRole =
   | 'context'
   | 'validation'
   | 'custom'
+
+export type WorkflowMode = 'template' | 'legacy-content'
 
 export type FieldType =
   | 'shortText'
@@ -203,6 +207,60 @@ export type WorkflowRules = {
   historyPolicy: HistoryPolicy
 }
 
+export type ContentDocument = Omit<WorkflowDocument, 'role'> & {
+  role: Exclude<DocumentRole, 'protocol'>
+}
+
+export type ProtocolDocument = Omit<WorkflowDocument, 'role'> & {
+  role: 'protocol'
+}
+
+export type ProtocolBundle = {
+  document: ProtocolDocument
+  rules: WorkflowRules
+}
+
+export type ProtocolSystemState =
+  | { status: 'empty'; generatorVersion: '1' }
+  | { status: 'ready'; generatorVersion: '1'; sourceHash: string; bundle: ProtocolBundle }
+
+export type ProtocolSupplement = {
+  id: string
+  title: string
+  instruction: string
+  displayFormat: Extract<DisplayFormatId, 'paragraph' | 'bullet-list' | 'steps'>
+}
+
+export type LegacyProtocolOverride = {
+  documents: ProtocolDocument[]
+  rules: WorkflowRules
+  selectedDocumentId?: string
+}
+
+export type ProtocolState = {
+  system: ProtocolSystemState
+  supplements: ProtocolSupplement[]
+  legacyManualOverride?: LegacyProtocolOverride
+}
+
+export type ProtocolDiagnostic = {
+  id: string
+  severity: 'error' | 'warning'
+  title: string
+  message: string
+}
+
+export type ProtocolProjection = {
+  generated: ProtocolBundle | null
+  effective: ProtocolBundle | null
+  freshness: 'empty' | 'current' | 'stale'
+  owner: {
+    document: 'none' | 'system' | 'legacy-manual'
+    rules: 'none' | 'system' | 'legacy-manual'
+  }
+  diagnostics: ProtocolDiagnostic[]
+}
+
 export type ExportSettings = {
   packageNamePattern: string
   includeWorkflowJson: true
@@ -254,11 +312,27 @@ export type WorkflowSchema = {
   updatedAt: string
   maintenanceFormat: MaintenanceFormat
   secondaryFormat?: MaintenanceFormat
+  mode: WorkflowMode
   documents: WorkflowDocument[]
+  protocolState: ProtocolState
+  /**
+   * Runtime compatibility view. It is derived from protocolState and never
+   * written into a 1.1 workflow.json.
+   */
   rules: WorkflowRules
+  protocolProjection?: ProtocolProjection
   exportSettings: ExportSettings
   scoringSettings: ScoringSettings
   acceptedWarnings: AcceptedWarning[]
+}
+
+/** The JSON/IndexedDB shape. It deliberately has no top-level rules. */
+export type PersistedWorkflowSchema = Omit<
+  WorkflowSchema,
+  'documents' | 'rules' | 'protocolProjection'
+> & {
+  schemaVersion: typeof SCHEMA_VERSION
+  documents: ContentDocument[]
 }
 
 export type ValidationSeverity = 'error' | 'warning' | 'suggestion' | 'pass'
@@ -400,4 +474,19 @@ export function normalizeWorkflowSourcePriorities(workflow: WorkflowSchema): Wor
       sourcePriority: workflow.rules.sourcePriority.map(normalizeSourcePriority),
     },
   }
+}
+
+export function contentDocuments(workflow: Pick<WorkflowSchema, 'documents'>): ContentDocument[] {
+  return workflow.documents.filter((document): document is ContentDocument => document.role !== 'protocol')
+}
+
+export function emptyProtocolState(): ProtocolState {
+  return {
+    system: { status: 'empty', generatorVersion: '1' },
+    supplements: [],
+  }
+}
+
+export function cloneWorkflowRules(rules: WorkflowRules): WorkflowRules {
+  return structuredClone(rules)
 }

@@ -1,7 +1,8 @@
 import JSZip from 'jszip'
 import { exportDocumentsForFormat } from './export-documents'
 import { exportReadme } from './export-markdown'
-import { normalizeWorkflowSourcePriorities, type WorkflowSchema } from './schema'
+import type { WorkflowSchema } from './schema'
+import { buildProtocolProjection, normalizeWorkflowForRuntime, toPersistedWorkflow } from './protocol-state'
 import { hasBlockingErrors, validateWorkflow } from './validation'
 
 export type ExportPackage = {
@@ -24,12 +25,17 @@ function assertExportableVersion(workflow: WorkflowSchema): void {
 
 export function serializeWorkflowJson(workflow: WorkflowSchema): string {
   assertExportableVersion(workflow)
-  return JSON.stringify(normalizeWorkflowSourcePriorities(workflow), null, 2)
+  return JSON.stringify(toPersistedWorkflow(workflow), null, 2)
 }
 
 export async function createWorkflowZip(workflow: WorkflowSchema): Promise<ExportPackage> {
   assertExportableVersion(workflow)
-  const normalizedWorkflow = normalizeWorkflowSourcePriorities(workflow)
+  const projection = buildProtocolProjection(workflow)
+  if (!projection.effective) {
+    const issue = projection.diagnostics.find((diagnostic) => diagnostic.severity === 'error')
+    throw new Error(`导出被阻止：${issue?.title ?? '入口协议尚不可用'}`)
+  }
+  const normalizedWorkflow = normalizeWorkflowForRuntime(toPersistedWorkflow(workflow))
   const issues = validateWorkflow(normalizedWorkflow)
   const blocking = issues.find((issue) => issue.severity === 'error')
   if (hasBlockingErrors(issues)) {

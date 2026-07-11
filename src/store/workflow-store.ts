@@ -14,6 +14,7 @@ import {
   type ContentDocumentId,
 } from '../data/modules/standard-workflow-modules'
 import { parseImportedWorkflow } from '../domain/import-export'
+import { remapWorkflowRootIdentity } from '../domain/protocol-state'
 import {
   createField,
   fieldValueToText,
@@ -549,8 +550,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   duplicateCurrentProject: async () => {
     if (!canEdit(get().workflow)) return
     const current = get().workflow
-    const workflow = structuredClone(current) as WorkflowSchema
-    workflow.workflowId = newId('workflow')
+    const workflow = remapWorkflowRootIdentity(current, newId('workflow'))
     workflow.name = `${current.name} 副本`
     workflow.createdAt = new Date().toISOString()
     touch(workflow)
@@ -607,6 +607,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         return
       }
       await get().saveCurrent()
+    } catch (error) {
+      if (activeImportController?.signal.aborted) {
+        set({ storageMessage: '导入已取消。' })
+      } else {
+        set({
+          storageMessage: error instanceof Error ? `导入失败：${error.message}` : '导入失败，当前项目未改变。',
+        })
+      }
     } finally {
       activeImportController = undefined
       set({ importInProgress: false })

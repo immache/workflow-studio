@@ -3,14 +3,17 @@ import {
   DEFAULT_SCORING_SETTINGS,
   SCHEMA_VERSION,
   createField,
+  emptyValue,
   scalarValue,
   type DocumentRole,
   type InformationLifecycle,
   type SourceRef,
   type WorkflowDocument,
+  type WorkflowRules,
   type WorkflowSchema,
   type WorkflowSection,
 } from '../../domain/schema'
+import { createSystemProtocolState, normalizeWorkflowForRuntime } from '../../domain/protocol-state'
 
 const now = () => new Date().toISOString()
 
@@ -65,6 +68,43 @@ function document(input: {
       staleInfoHandling: input.lifecycle === 'historical' ? 'archive' : 'remove',
     },
   }
+}
+
+type TemplateSource = Pick<
+  WorkflowSchema,
+  'schemaVersion' | 'workflowId' | 'name' | 'description' | 'createdAt' | 'updatedAt'
+  | 'maintenanceFormat' | 'secondaryFormat' | 'exportSettings' | 'scoringSettings' | 'acceptedWarnings'
+> & {
+  documents: WorkflowDocument[]
+  rules: WorkflowRules
+}
+
+function createTemplateRuntime(input: TemplateSource): WorkflowSchema {
+  const documents = input.documents
+    .filter((documentItem) => documentItem.role !== 'protocol')
+    .map((documentItem, documentIndex) => ({
+      ...documentItem,
+      order: documentIndex + 1,
+      readPolicy: { ...documentItem.readPolicy, readOrderHint: documentIndex + 1 },
+      sections: documentItem.sections.map((sectionItem) => ({
+        ...sectionItem,
+        fields: sectionItem.fields.map((field) => ({
+          ...field,
+          value: emptyValue(),
+          required: false,
+          allowEmpty: true,
+          defaultValue: undefined,
+          displayFormat: field.displayFormat === 'steps' ? 'steps' as const : field.displayFormat === 'bullet-list' ? 'bullet-list' as const : 'paragraph' as const,
+        })),
+      })),
+    }))
+  const persisted = {
+    ...input,
+    mode: 'template' as const,
+    documents,
+    protocolState: createSystemProtocolState({ name: input.name, description: input.description, documents }),
+  }
+  return normalizeWorkflowForRuntime(persisted)
 }
 
 export function createBlankMaterialDocument(materialId: BlankMaterialId, order: number): WorkflowDocument {
@@ -402,7 +442,7 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
     }),
   ]
 
-  return {
+  return createTemplateRuntime({
     schemaVersion: SCHEMA_VERSION,
     workflowId: `workflow-${Date.now()}`,
     name: '当前标准工作流',
@@ -479,7 +519,7 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
     exportSettings: DEFAULT_EXPORT_SETTINGS,
     scoringSettings: DEFAULT_SCORING_SETTINGS,
     acceptedWarnings: [],
-  }
+  })
 }
 
 export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSchema {
@@ -501,7 +541,7 @@ export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSch
   for (const documentItem of documents.filter((item) => item.role === 'plan')) {
     sourcePriority.push({ sourceType: 'stable-plan', label: documentItem.filename, documentId: documentItem.id, priority: sourcePriority.length + 1, recencyPolicy: 'ignore-recency' })
   }
-  return {
+  return createTemplateRuntime({
     schemaVersion: SCHEMA_VERSION,
     workflowId: `workflow-${Date.now()}`,
     name: '空白工作流',
@@ -549,5 +589,5 @@ export function createBlankWorkflow(materialIds?: Iterable<string>): WorkflowSch
     exportSettings: DEFAULT_EXPORT_SETTINGS,
     scoringSettings: DEFAULT_SCORING_SETTINGS,
     acceptedWarnings: [],
-  }
+  })
 }

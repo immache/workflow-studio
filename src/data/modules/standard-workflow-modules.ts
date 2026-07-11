@@ -3,6 +3,7 @@ import {
   DEFAULT_SCORING_SETTINGS,
   SCHEMA_VERSION,
   createField,
+  emptyValue,
   scalarValue,
   type CompletionCheck,
   type DocumentRole,
@@ -19,6 +20,7 @@ import {
   type WorkflowSchema,
   type WorkflowSection,
 } from '../../domain/schema'
+import { createSystemProtocolState, normalizeWorkflowForRuntime } from '../../domain/protocol-state'
 
 export type ContentDocumentId = 'spec' | 'status' | 'user' | 'memory' | 'context'
 
@@ -140,6 +142,7 @@ export const standardDocumentCards: StandardDocumentCard[] = [
 
 export const displayFormatLabels: Record<DisplayFormatId, string> = {
   paragraph: '段落说明',
+  'bullet-list': '项目列表',
   checklist: '检查清单',
   steps: '步骤序列',
   'key-value': '键值表',
@@ -680,32 +683,40 @@ export function createModularWorkflow(input: ModularWorkflowInput): WorkflowSche
   const createdAt = now()
   const contentIds = normalizeContentDocumentIds(input.selectedDocumentIds)
   const contentDocuments = contentIds.map((id, index) => createContentDocument(id, index + 2))
-  const status = contentDocuments.find((documentItem) => documentItem.role === 'status')
-  const currentGoal = status?.sections.flatMap((sectionItem) => sectionItem.fields).find((fieldItem) => fieldItem.id === 'status-next-action-current-goal')
-  const nextStep = status?.sections.flatMap((sectionItem) => sectionItem.fields).find((fieldItem) => fieldItem.id === 'status-next-action-next-atomic-step')
-  if (currentGoal) currentGoal.value = scalarValue(input.name.trim() || '继续完善当前项目。')
-  if (nextStep) nextStep.value = scalarValue(input.firstAction.trim() || '读取 STATUS.html，确认下一原子步骤。')
-
-  const protocol = createProtocolDraftDocument(contentDocuments, 1, input.firstAction)
-  const documents = [protocol, ...contentDocuments].map((documentItem, index) => ({
+  const documents = contentDocuments.map((documentItem, documentIndex) => ({
     ...documentItem,
-    order: index + 1,
-    readPolicy: { ...documentItem.readPolicy, readOrderHint: index + 1 },
+    order: documentIndex + 1,
+    readPolicy: { ...documentItem.readPolicy, readOrderHint: documentIndex + 1 },
+    sections: documentItem.sections.map((sectionItem) => ({
+      ...sectionItem,
+      fields: sectionItem.fields.map((field) => ({
+        ...field,
+        value: emptyValue(),
+        required: false,
+        allowEmpty: true,
+        defaultValue: undefined,
+        displayFormat: field.displayFormat === 'steps' ? 'steps' as const : field.displayFormat === 'bullet-list' ? 'bullet-list' as const : 'paragraph' as const,
+      })),
+    })),
   }))
-
-  return {
+  const name = input.name.trim() || '模块化工作流'
+  const description = input.description.trim() || `用于在模型协作中持续记录${input.recoveryRisk.trim() || '目标、下一步和当前阻塞'}。`
+  const draft = {
     schemaVersion: SCHEMA_VERSION,
     workflowId: `workflow-${Date.now()}`,
-    name: input.name.trim() || '模块化工作流',
-    description: input.description.trim() || `恢复风险：${input.recoveryRisk.trim() || '目标、下一步和当前阻塞最容易丢失。'}`,
+    name,
+    description,
     createdAt,
     updatedAt: createdAt,
-    maintenanceFormat: 'html',
-    secondaryFormat: 'markdown',
+    maintenanceFormat: 'html' as const,
+    secondaryFormat: 'markdown' as const,
     documents,
+    mode: 'template' as const,
+    protocolState: createSystemProtocolState({ name, description, documents }),
     rules: createRulesForDocuments(contentDocuments),
     exportSettings: DEFAULT_EXPORT_SETTINGS,
     scoringSettings: DEFAULT_SCORING_SETTINGS,
     acceptedWarnings: [],
   }
+  return normalizeWorkflowForRuntime(draft)
 }

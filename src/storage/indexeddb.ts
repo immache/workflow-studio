@@ -1,5 +1,8 @@
 import { createStore, del, get, keys, set } from 'idb-keyval'
 import type { WorkflowSchema } from '../domain/schema'
+import { migrateWorkflowSchema } from '../data/migrations/workflow-migrations'
+import { normalizeWorkflowForRuntime, toPersistedWorkflow } from '../domain/protocol-state'
+import { assertWorkflowShape } from '../domain/strict-workflow-shape'
 
 export type WorkflowProjectMeta = {
   id: string
@@ -25,7 +28,17 @@ export async function assertStorageAvailable(): Promise<void> {
 export async function listWorkflowProjects(): Promise<WorkflowProjectMeta[]> {
   const allKeys = await keys(database)
   const workflowKeys = allKeys.filter((key): key is string => typeof key === 'string' && key.startsWith(projectPrefix))
-  const workflows = await Promise.all(workflowKeys.map((key) => get<WorkflowSchema>(key, database)))
+  const workflows = await Promise.all(workflowKeys.map(async (key) => {
+    const raw = await get<unknown>(key, database)
+    if (!raw) return undefined
+    try {
+      const migrated = migrateWorkflowSchema(raw)
+      assertWorkflowShape(migrated)
+      return normalizeWorkflowForRuntime(migrated)
+    } catch {
+      return undefined
+    }
+  }))
   return workflows
     .filter((workflow): workflow is WorkflowSchema => Boolean(workflow))
     .map((workflow) => ({
@@ -38,7 +51,11 @@ export async function listWorkflowProjects(): Promise<WorkflowProjectMeta[]> {
 }
 
 export async function loadWorkflowProject(id: string): Promise<WorkflowSchema | undefined> {
-  return get<WorkflowSchema>(projectKey(id), database)
+  const raw = await get<unknown>(projectKey(id), database)
+  if (!raw) return undefined
+  const migrated = migrateWorkflowSchema(raw)
+  assertWorkflowShape(migrated)
+  return normalizeWorkflowForRuntime(migrated)
 }
 
 export async function loadActiveWorkflowProjectId(): Promise<string | undefined> {
@@ -50,7 +67,7 @@ export async function saveActiveWorkflowProjectId(id: string): Promise<void> {
 }
 
 export async function saveWorkflowProject(workflow: WorkflowSchema): Promise<void> {
-  await set(projectKey(workflow.workflowId), workflow, database)
+  await set(projectKey(workflow.workflowId), toPersistedWorkflow(workflow), database)
 }
 
 export async function deleteWorkflowProject(id: string): Promise<void> {
