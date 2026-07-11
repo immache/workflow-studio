@@ -101,6 +101,19 @@ describe('Workflow Studio 1.1 data semantics', () => {
     await expect(parseWorkflowJson(JSON.stringify(protocolInDocuments))).rejects.toThrow(/document\.role/)
   })
 
+  it('opens a higher-version package as a read-only compatibility view', async () => {
+    const imported = await parseWorkflowJson(JSON.stringify({
+      schemaVersion: '9.0.0',
+      name: '未来版本工作流',
+      description: '当前版本不应尝试降级写回。',
+    }))
+
+    expect(imported.readOnlyReason).toMatch(/高于当前应用/)
+    expect(imported.sourceSchemaVersion).toBe('9.0.0')
+    expect(imported.documents.find((document) => document.role === 'validation')?.title).toBe('只读导入说明')
+    await expect(createWorkflowZip(imported)).rejects.toThrow(/只能查看/)
+  })
+
   it('marks generated protocols stale when template structure changes and refreshes them explicitly', () => {
     const workflow = createModularWorkflow({
       name: '过期检查',
@@ -148,6 +161,28 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(zip.files['documents/STATUS.html']).not.toContain('未填写')
   })
 
+  it('renders the three beginner display formats as distinct HTML and Markdown structures', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const status = workflow.documents.find((document) => document.role === 'status')
+    if (!status) throw new Error('missing status fixture')
+    const fields = status.sections.flatMap((section) => section.fields)
+    fields[0]!.displayFormat = 'paragraph'
+    fields[0]!.value = { kind: 'scalar', value: '用一段完整说明保留当前判断。' }
+    fields[1]!.displayFormat = 'bullet-list'
+    fields[1]!.value = { kind: 'scalar', value: '第一项\n第二项' }
+    fields[2]!.displayFormat = 'steps'
+    fields[2]!.value = { kind: 'scalar', value: '先读取资料\n再执行下一步' }
+
+    const html = exportHtmlDocuments(workflow)['STATUS.html']
+    const markdown = exportMarkdownDocuments(workflow)['STATUS.md']
+
+    expect(html).toContain('<div class="value paragraph"')
+    expect(html).toContain('<ul class="value bullet-list"')
+    expect(html).toContain('<ol class="value steps"')
+    expect(markdown).toContain('- 第一项')
+    expect(markdown).toContain('1. 先读取资料')
+  })
+
   it('treats an empty next-step field as a template slot during recovery rehearsal', () => {
     const workflow = createCurrentStandardWorkflow()
     const result = simulateRecovery(workflow, 'new-session')
@@ -177,5 +212,52 @@ describe('Workflow Studio 1.1 data semantics', () => {
 
     expect(useWorkflowStore.getState().workflow?.workflowId).toBe(current.workflowId)
     expect(useWorkflowStore.getState().storageMessage).toMatch(/导入失败/)
+  })
+
+  it('only clears imported legacy values through the explicit template conversion action', async () => {
+    const imported = await parseWorkflowJson(JSON.stringify(legacyV10()))
+    const legacyValues = imported.documents
+      .filter((document) => document.role !== 'protocol')
+      .flatMap((document) => document.sections)
+      .flatMap((section) => section.fields)
+    legacyValues[0]!.value = { kind: 'scalar', value: '保留直到用户明确转换的旧内容。' }
+    useWorkflowStore.setState({ workflow: imported, storageAvailable: false, storageMessage: 'legacy baseline' })
+
+    useWorkflowStore.getState().convertLegacyToTemplate()
+    const converted = useWorkflowStore.getState().workflow
+
+    expect(converted?.mode).toBe('template')
+    expect(converted?.protocolState.legacyManualOverride).toBeUndefined()
+    expect(converted?.documents.filter((document) => document.role !== 'protocol')
+      .flatMap((document) => document.sections)
+      .flatMap((section) => section.fields)
+      .every((field) => field.value.kind === 'empty' && field.required === false && field.validation.customRules.length === 0)).toBe(true)
+    expect(validateWorkflow(converted!).filter((issue) => issue.severity === 'error')).toHaveLength(0)
+  })
+
+  it('preserves an old display format until the user deliberately chooses a new beginner format', async () => {
+    const legacy = legacyV10()
+    const content = legacy.documents.find((document) => document.role !== 'protocol')
+    const field = content?.sections[0]?.fields[0]
+    if (!content || !field) throw new Error('legacy fixture has no editable field')
+    field.displayFormat = 'checklist'
+    const imported = await parseWorkflowJson(JSON.stringify(legacy))
+    const importedDocument = imported.documents.find((document) => document.role !== 'protocol')
+    const importedField = importedDocument?.sections[0]?.fields[0]
+    if (!importedDocument || !importedField) throw new Error('migrated fixture has no editable field')
+
+    useWorkflowStore.setState({ workflow: imported, storageAvailable: false, storageMessage: 'legacy display baseline' })
+    useWorkflowStore.getState().updateField(importedDocument.id, importedDocument.sections[0]!.id, importedField.id, {
+      label: '更新后的说明项',
+      guidance: '只更新名称和说明时，旧排版必须保持原样。',
+    })
+    expect(useWorkflowStore.getState().workflow?.documents.find((document) => document.id === importedDocument.id)?.sections[0]?.fields[0]?.displayFormat).toBe('checklist')
+
+    useWorkflowStore.getState().updateField(importedDocument.id, importedDocument.sections[0]!.id, importedField.id, {
+      label: '更新后的说明项',
+      guidance: '主动选择新排版时才替换旧排版。',
+      displayFormat: 'bullet-list',
+    })
+    expect(useWorkflowStore.getState().workflow?.documents.find((document) => document.id === importedDocument.id)?.sections[0]?.fields[0]?.displayFormat).toBe('bullet-list')
   })
 })

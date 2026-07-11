@@ -66,13 +66,14 @@ type WorkflowStore = {
   removeSection: (documentId: string, sectionId: string) => void
   addField: (documentId: string, sectionId: string) => string | undefined
   addFieldFromModule: (documentId: string, sectionId: string, moduleId: string) => string | undefined
-  updateField: (documentId: string, sectionId: string, fieldId: string, patch: Pick<WorkflowField, 'label' | 'guidance' | 'displayFormat'>) => void
+  updateField: (documentId: string, sectionId: string, fieldId: string, patch: Pick<WorkflowField, 'label' | 'guidance'> & Partial<Pick<WorkflowField, 'displayFormat'>>) => void
   moveField: (documentId: string, sectionId: string, fieldId: string, direction: -1 | 1) => void
   removeField: (documentId: string, sectionId: string, fieldId: string) => void
   regenerateProtocol: () => void
   addProtocolSupplement: (input: Omit<ProtocolSupplement, 'id'>) => void
   removeProtocolSupplement: (id: string) => void
   selectLegacyProtocol: (documentId: string) => void
+  convertLegacyToTemplate: () => void
   saveCurrent: () => Promise<void>
 }
 
@@ -162,7 +163,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
     workflow,
     ...(message ? { storageMessage: message } : {}),
   })
-  const persist = async () => {
+  const persist = async (successMessage = '已保存到本地浏览器。') => {
     const workflow = get().workflow
     if (!workflow) return
     if (workflow.readOnlyReason) {
@@ -177,7 +178,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
     try {
       await saveWorkflowProject(workflow)
       await saveActiveWorkflowProjectId(workflow.workflowId)
-      set({ projects: await listWorkflowProjects(), saveStatus: 'saved', storageMessage: '已保存到本地浏览器。' })
+      set({ projects: await listWorkflowProjects(), saveStatus: 'saved', storageMessage: successMessage })
     } catch (error) {
       set({ saveStatus: 'failed', storageMessage: error instanceof Error ? `保存失败：${error.message}` : '保存失败，请导出 JSON 备份。' })
     }
@@ -264,6 +265,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       set({ importInProgress: true, storageMessage: `正在导入 ${file.name}。` })
       try {
         const workflow = await parseImportedWorkflow(file, { signal: controller.signal })
+        if (workflow.readOnlyReason && !window.confirm(`${workflow.readOnlyReason}\n\n是否以只读副本打开？原文件不会被降级或覆盖。`)) {
+          set({ saveStatus: 'saved', storageMessage: '已取消打开高版本只读副本，当前项目未改变。' })
+          return
+        }
         setWorkflow(workflow, `已导入 ${file.name}。`)
         if (!workflow.readOnlyReason) await persist()
         else set({ saveStatus: 'memory', storageMessage: workflow.readOnlyReason })
@@ -369,7 +374,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       if (!field) return
       field.label = patch.label
       field.guidance = patch.guidance
-      field.displayFormat = templateFormat(patch.displayFormat)
+      if (patch.displayFormat !== undefined) field.displayFormat = templateFormat(patch.displayFormat)
     }),
     moveField: (documentId, sectionId, fieldId, direction) => update((draft) => {
       const section = draft.documents.find((document) => document.id === documentId)?.sections.find((candidate) => candidate.id === sectionId)
@@ -399,6 +404,35 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
     selectLegacyProtocol: (documentId) => update((draft) => {
       if (draft.protocolState.legacyManualOverride) draft.protocolState.legacyManualOverride.selectedDocumentId = documentId
     }),
+    convertLegacyToTemplate: () => {
+      const current = get().workflow
+      if (!isEditable(current) || current.mode !== 'legacy-content') return
+      const draft = toPersistedWorkflow(current)
+      draft.mode = 'template'
+      draft.updatedAt = new Date().toISOString()
+      draft.acceptedWarnings = []
+      draft.documents = draft.documents.map((document) => ({
+        ...document,
+        sections: document.sections.map((section) => ({
+          ...section,
+          fields: section.fields.map((field) => ({
+            ...field,
+            type: 'longText',
+            value: emptyValue(),
+            required: false,
+            allowEmpty: true,
+            defaultValue: undefined,
+            options: undefined,
+            repeatable: false,
+            validation: { customRules: [] },
+            displayFormat: templateFormat(field.displayFormat),
+          })),
+        })),
+      }))
+      draft.protocolState = { ...draft.protocolState, legacyManualOverride: undefined }
+      setWorkflow(withRegeneratedSystemProtocol(normalizeWorkflowForRuntime(draft)), '已转换为新的空模板。')
+      void persist('已转换为新的空模板。')
+    },
     saveCurrent: persist,
   }
 })

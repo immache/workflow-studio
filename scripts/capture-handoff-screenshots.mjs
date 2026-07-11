@@ -1,281 +1,309 @@
 import { chromium, devices } from '@playwright/test'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, writeFile } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { createServer } from 'node:net'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import path from 'node:path'
 
-const baseUrl = process.env.WORKFLOW_STUDIO_URL ?? 'http://127.0.0.1:4173/'
-const outputDir = path.join(process.cwd(), 'artifacts', 'handoff-screenshots')
-
+const execFileAsync = promisify(execFile)
+const cwd = process.cwd()
+const outputDir = path.join(cwd, 'artifacts', 'handoff-screenshots')
+const externalUrl = process.env.WORKFLOW_STUDIO_URL?.replace(/\/$/, '')
 const viewports = [
-  { name: 'desktop', viewport: { width: 1440, height: 1000 } },
-  { name: 'tablet', viewport: { width: 1024, height: 900 } },
-  { name: 'mobile', viewport: { width: 393, height: 852 }, device: devices['Pixel 7'] },
+  { name: 'desktop-1440', viewport: { width: 1440, height: 1000 } },
+  { name: 'tablet-1024', viewport: { width: 1024, height: 900 } },
+  { name: 'mobile-393', viewport: { width: 393, height: 852 }, device: devices['Pixel 7'] },
+  { name: 'mobile-360', viewport: { width: 360, height: 800 }, device: devices['Galaxy S9+'] },
+  { name: 'mobile-320', viewport: { width: 320, height: 780 }, device: devices['iPhone SE'] },
 ]
 
-const states = {
-  home: { selector: '.mode-home .home-hero', hash: '#home' },
-  learn: { selector: '.mode-learn .learn-main', hash: '#learn' },
-  'build-purpose': { selector: '#start-title', hash: '#build/step-1', activeStep: 1 },
-  'document-selection': { selector: '#materials-title', hash: '#build/step-2', activeStep: 2 },
-  'module-canvas': { selector: '.module-builder-step', hash: '#build/step-3', activeStep: 3 },
-  'agents-draft-review': { selector: '.protocol-builder-step', hash: '#build/step-4', activeStep: 4 },
-  'result-preview': {
-    selector: '#preview-title',
-    additionalSelectors: ['iframe.document-preview-frame'],
-    frameSelector: 'iframe.document-preview-frame',
-    frameContentSelector: 'h1',
-    hash: '#build/step-5',
-    activeStep: 5,
-  },
-  'guided-export': {
-    selector: '#export-ready-title',
-    additionalSelectors: ['.builder-simulation-result'],
-    hash: '#build/step-6',
-    activeStep: 6,
-  },
-  export: {
-    selector: '#export-title',
-    additionalSelectors: ['iframe.document-preview-frame'],
-    frameSelector: 'iframe.document-preview-frame',
-    frameContentSelector: 'h1',
-    viewportOnly: true,
-    hash: '#advanced/export',
-  },
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+function previewLogPath() {
+  return path.join(outputDir, 'preview.log')
 }
 
-async function waitForState(page, expected) {
-  await page.locator(expected.selector).waitFor({ state: 'visible' })
-  for (const selector of expected.additionalSelectors ?? []) await page.locator(selector).waitFor({ state: 'visible' })
-  if (expected.frameSelector && expected.frameContentSelector) {
-    await page.frameLocator(expected.frameSelector).locator(expected.frameContentSelector).waitFor({ state: 'visible' })
+async function chooseFreePort() {
+  const probe = createServer()
+  await new Promise((resolve, reject) => {
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', resolve)
+  })
+  const address = probe.address()
+  const port = typeof address === 'object' && address ? address.port : null
+  await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()))
+  if (!port) throw new Error('Unable to reserve a loopback port for the handoff preview.')
+  return port
+}
+
+async function waitForHealth(url, child) {
+  const deadline = Date.now() + 20_000
+  let lastError = 'No response received.'
+  while (Date.now() < deadline) {
+    if (child?.exitCode !== null && child?.exitCode !== undefined) {
+      throw new Error(`Preview process exited with code ${child.exitCode}.`)
+    }
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2_000) })
+      if (response.ok) return
+      lastError = `HTTP ${response.status}`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await sleep(250)
   }
-  await page.waitForFunction(({ hash, activeStep }) => {
-    const activeStepNumber = document.querySelector('.stepper li.active span')?.textContent?.trim()
-    return window.location.hash === hash && (activeStep === undefined || activeStepNumber === String(activeStep))
-  }, { hash: expected.hash, activeStep: expected.activeStep })
-  if (expected.activeStep !== undefined) await page.waitForTimeout(450)
+  throw new Error(`Timed out waiting for ${url}: ${lastError}`)
 }
 
-async function metrics(page, label, expected) {
-  return page.evaluate(({ currentLabel, currentExpected }) => {
+async function waitForExit(child) {
+  if (child.exitCode !== null) return
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    sleep(4_000),
+  ])
+}
+
+async function stopOwnedPreview(child, logStream) {
+  if (child.exitCode === null && child.pid) {
+    if (process.platform === 'win32') {
+      await execFileAsync('taskkill', ['/pid', String(child.pid), '/T', '/F']).catch(() => undefined)
+    } else {
+      child.kill('SIGTERM')
+    }
+    await waitForExit(child)
+  }
+  logStream.end()
+}
+
+async function startPreview() {
+  if (externalUrl) {
+    try {
+      await waitForHealth(externalUrl)
+    } catch (error) {
+      throw new Error(`External WORKFLOW_STUDIO_URL is unavailable: ${externalUrl}. Log: external service is not owned. Retry: WORKFLOW_STUDIO_URL=${externalUrl} npm run screenshots:handoff. ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return { baseUrl: externalUrl, port: null, stop: async () => {} }
+  }
+
+  try {
+    await access(path.join(cwd, 'dist', 'index.html'))
+  } catch {
+    throw new Error('Missing dist/index.html. Run npm run build, then retry npm run screenshots:handoff.')
+  }
+
+  const port = await chooseFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const logStream = createWriteStream(previewLogPath(), { flags: 'w' })
+  const viteCli = path.join(cwd, 'node_modules', 'vite', 'bin', 'vite.js')
+  // Run the package script when npm exposes its CLI path; direct Vite is the equivalent fallback for node-only invocation.
+  const command = process.execPath
+  const args = process.env.npm_execpath
+    ? [process.env.npm_execpath, 'run', 'preview', '--', '--host', '127.0.0.1', '--port', String(port), '--strictPort']
+    : [viteCli, 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort']
+  const child = spawn(command, args, {
+    cwd,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  child.stdout.pipe(logStream)
+  child.stderr.pipe(logStream)
+
+  try {
+    await waitForHealth(baseUrl, child)
+  } catch (error) {
+    await stopOwnedPreview(child, logStream)
+    throw new Error(`Preview health check failed for ${baseUrl}. Log: ${previewLogPath()}. Retry: npm run build && npm run screenshots:handoff. ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  return { baseUrl, port, stop: () => stopOwnedPreview(child, logStream) }
+}
+
+function collectMetrics(page, label, selector, expectedHash) {
+  return page.evaluate(({ currentLabel, targetSelector, hash }) => {
+    const visibleRect = (element) => {
+      if (!element) return null
+      const style = getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 || rect.width <= 0 || rect.height <= 0) return null
+      return rect
+    }
+    const target = document.querySelector(targetSelector)
+    const allControls = [...document.querySelectorAll('button, a[href], summary, input, select, textarea')]
+    const controlOwners = new Set()
+    for (const element of allControls) {
+      if (element.matches('input[type="file"], input[type="hidden"]')) continue
+      const owner = element.matches('input[type="checkbox"], input[type="radio"]') ? element.closest('label') ?? element : element
+      if (visibleRect(owner)) controlOwners.add(owner)
+    }
+    const controls = [...controlOwners].map((element) => ({
+      element,
+      rect: visibleRect(element),
+      label: (element.getAttribute('aria-label') || element.textContent || element.tagName).replace(/\s+/g, ' ').trim().slice(0, 80),
+    })).filter((item) => item.rect)
+    const undersizedControls = controls.filter(({ rect }) => rect.width < 44 || rect.height < 44).map(({ label, rect }) => ({
+      label,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    }))
+    const overlappingControls = []
+    for (let index = 0; index < controls.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < controls.length; otherIndex += 1) {
+        const first = controls[index]
+        const second = controls[otherIndex]
+        if (first.element.contains(second.element) || second.element.contains(first.element)) continue
+        const width = Math.min(first.rect.right, second.rect.right) - Math.max(first.rect.left, second.rect.left)
+        const height = Math.min(first.rect.bottom, second.rect.bottom) - Math.max(first.rect.top, second.rect.top)
+        if (width > 2 && height > 2) overlappingControls.push(`${first.label} / ${second.label}`)
+      }
+    }
+    const selectedFormat = document.querySelector('.format-option:has(input:checked) strong')?.textContent?.trim() ?? null
+    const selectedPreviewVisible = Boolean(visibleRect(document.querySelector('.format-option:has(input:checked) .format-sample')))
     const root = document.documentElement
     const body = document.body
-    const onboarding = document.querySelector('.onboarding-main')
-    const rawTerms = onboarding?.innerText.match(/shortText|lifecycle|sourceType|recencyPolicy|prefer-newer|FieldType|sourcePriority/g) ?? []
-    const writeMapVisible = Boolean(document.querySelector('.write-map'))
-    const moduleWorkbench = document.querySelector('.module-workbench')
-    const moduleWorkbenchColumns = moduleWorkbench
-      ? getComputedStyle(moduleWorkbench).gridTemplateColumns.split(' ').filter(Boolean).length
-      : 0
-    const documentTabRow = document.querySelector('.document-tab-row')
-    const documentTabColumns = documentTabRow
-      ? getComputedStyle(documentTabRow).gridTemplateColumns.split(' ').filter(Boolean).length
-      : 0
-    const moduleChoiceContentOverflows = [...document.querySelectorAll('.module-choice-button')].filter((button) => {
-      const buttonRect = button.getBoundingClientRect()
-      return [...button.children].some((child) => {
-        const childRect = child.getBoundingClientRect()
-        return childRect.left < buttonRect.left - 1 || childRect.right > buttonRect.right + 1
-      })
-    }).length
-    const semanticUnitFailures = [...document.querySelectorAll('.semantic-unit')].filter((element) => {
-      const rect = element.getBoundingClientRect()
-      return element.getClientRects().length !== 1
-        || rect.width > window.innerWidth - 24
-        || rect.left < -1
-        || rect.right > window.innerWidth + 1
-    }).map((element) => element.textContent?.trim()).filter(Boolean)
-    const selectorIsVisible = (selector) => {
-      const element = document.querySelector(selector)
-      const rect = element?.getBoundingClientRect()
-      const style = element ? getComputedStyle(element) : null
-      return Boolean(
-        rect
-        && style
-        && rect.width > 0
-        && rect.height > 0
-        && style.display !== 'none'
-        && style.visibility !== 'hidden',
-      )
-    }
-    const expectedElementVisible = selectorIsVisible(currentExpected.selector)
-    const additionalSelectorsVisible = (currentExpected.additionalSelectors ?? []).every(selectorIsVisible)
-    const activeStep = document.querySelector('.stepper li.active')
-    const activeStepRect = activeStep?.getBoundingClientRect()
-    const stepperRect = activeStep?.closest('.stepper')?.getBoundingClientRect()
-    const activeStepNumber = activeStep?.querySelector('span')?.textContent?.trim() ?? null
-    const activeStepFullyVisible = activeStepRect && stepperRect
-      ? activeStepRect.left >= Math.max(0, stepperRect.left) - 1
-        && activeStepRect.right <= Math.min(window.innerWidth, stepperRect.right) + 1
-        && activeStepRect.top >= Math.max(0, stepperRect.top) - 1
-        && activeStepRect.bottom <= Math.min(window.innerHeight, stepperRect.bottom) + 1
-      : null
-    const expectedStepMatches = currentExpected.activeStep === undefined
-      ? true
-      : activeStepNumber === String(currentExpected.activeStep)
-    const hashMatches = window.location.hash === currentExpected.hash
     return {
       label: currentLabel,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
-      scrollY: window.scrollY,
+      route: window.location.hash,
+      expectedHash: hash,
+      routeMatches: window.location.hash === hash,
+      expectedElementVisible: Boolean(visibleRect(target)),
       horizontalOverflow: Math.max(0, Math.max(root.scrollWidth, body.scrollWidth) - root.clientWidth),
-      expectedSelector: currentExpected.selector,
-      expectedHash: currentExpected.hash,
-      actualHash: window.location.hash,
-      expectedElementVisible,
-      additionalSelectorsVisible,
-      expectedStep: currentExpected.activeStep ?? null,
-      activeStepNumber,
-      activeStepFullyVisible,
-      activeStepRect: activeStepRect
-        ? { left: activeStepRect.left, right: activeStepRect.right, top: activeStepRect.top, bottom: activeStepRect.bottom }
-        : null,
-      pageStateCorrect: expectedElementVisible && additionalSelectorsVisible && hashMatches && expectedStepMatches,
-      onboardingRawTerms: [...new Set(rawTerms)],
-      homePrimaryEntries: document.querySelectorAll('.home-entry .button').length,
-      writeMapVisible,
-      protocolMapVisible: document.body.innerText.includes('协议地图'),
-      moduleWorkbenchColumns,
-      documentTabColumns,
-      moduleChoiceContentOverflows,
-      semanticUnitFailures,
+      selectedFormat,
+      selectedPreviewVisible,
+      undersizedControls,
+      overlappingControls,
+      console: 'captured separately through pageerror and console listeners',
     }
-  }, { currentLabel: label, currentExpected: expected })
+  }, { currentLabel: label, targetSelector: selector, hash: expectedHash })
 }
 
-async function capture(page, viewportName, stateName) {
-  const expected = states[stateName]
-  if (!expected) throw new Error(`Unknown screenshot state: ${stateName}`)
-  await waitForState(page, expected)
-  if (expected.frameSelector) {
-    await page.locator(expected.frameSelector).scrollIntoViewIfNeeded()
-    await page.waitForTimeout(150)
-  }
-  if (!expected.viewportOnly && !expected.frameSelector) {
-    await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
-  }
-  await page.waitForTimeout(50)
-  const file = `${viewportName}-${stateName}.png`
-  const screenshotStyle = expected.frameSelector && !expected.viewportOnly
-    ? await page.addStyleTag({ content: '.topbar, .stepper, .sticky-map { position: static !important; }' })
-    : null
-  try {
-    if (expected.captureSelector) {
-      await page.locator(expected.captureSelector).screenshot({ path: path.join(outputDir, file) })
-    } else {
-      await page.screenshot({ path: path.join(outputDir, file), fullPage: !expected.viewportOnly })
-    }
-  } finally {
-    await screenshotStyle?.evaluate((element) => element.remove())
-  }
+async function capture(page, viewportName, stateName, selector, expectedHash) {
+  const target = page.locator(selector)
+  await target.waitFor({ state: 'visible' })
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0 }))
-  return metrics(page, `${viewportName}:${stateName}`, expected)
+  await page.waitForTimeout(180)
+  const metrics = await collectMetrics(page, `${viewportName}:${stateName}`, selector, expectedHash)
+  await page.screenshot({ path: path.join(outputDir, `${viewportName}-${stateName}.png`), fullPage: true })
+  return metrics
 }
 
-async function markEveryContentDocumentReviewed(page) {
-  const documentTabs = page.locator('.document-tab-row .module-doc-card')
-  const documentCount = await documentTabs.count()
-  if (documentCount === 0) throw new Error('Module canvas has no content documents to review.')
-
-  for (let index = 0; index < documentCount; index += 1) {
-    const documentTab = documentTabs.nth(index)
-    const filename = (await documentTab.locator('code').textContent())?.trim()
-    if (!filename) throw new Error(`Content document ${index + 1} has no filename.`)
-    const mobilePicker = page.getByLabel('当前编辑文档')
-    if (await mobilePicker.isVisible()) {
-      const value = await mobilePicker.locator('option').filter({ hasText: filename }).getAttribute('value')
-      if (!value) throw new Error(`Content document ${filename} is missing from the mobile picker.`)
-      await mobilePicker.selectOption(value)
-    } else {
-      await documentTab.click()
-    }
-    const reviewButton = page.locator('.document-reviewed-button')
-    await reviewButton.waitFor({ state: 'visible' })
-    if (!await reviewButton.isEnabled()) throw new Error(`Content document ${index + 1} has blocking validation errors.`)
-    await reviewButton.click()
-    await documentTab.locator('.document-review-state').filter({ hasText: '已检查' }).waitFor({ state: 'attached' })
-  }
-
-  await page.getByLabel('内容文档检查进度').getByText(`${documentCount}/${documentCount} 份文档已检查`).waitFor({ state: 'visible' })
-  const reviewProtocolButton = page.getByRole('button', { name: '生成并审查入口协议草案' })
-  if (!await reviewProtocolButton.isEnabled()) throw new Error('Protocol review remained disabled after every content document was reviewed.')
+async function createExampleWorkflow(page, baseUrl) {
+  await page.goto(`${baseUrl}/#build/step-1`)
+  await page.getByRole('radio', { name: /从空白开始/ }).click()
+  await page.getByRole('button', { name: '创建空白模板' }).click()
+  await page.getByRole('checkbox', { name: /STATUS\.html/ }).check()
+  await page.getByRole('button', { name: '新增自定义文档' }).click()
+  await page.getByRole('button', { name: '开始搭建资料内容' }).click()
+  await page.locator('.document-tab').last().click()
+  await page.getByRole('button', { name: '新增信息项' }).click()
+  const field = page.locator('.field-design-card')
+  await field.getByLabel('信息项名称').fill('下一次开始时先做什么')
+  await field.getByLabel('常驻填写说明').fill('写清恢复后唯一、具体、可以直接执行的第一步。')
+  return field
 }
 
-async function runViewport(browser, config) {
+async function prepareProtocolReview(page) {
+  await page.getByRole('button', { name: '审查入口协议' }).click()
+  await page.getByRole('button', { name: '生成入口协议' }).click()
+  await page.getByRole('checkbox', { name: '我已核对资料、读取顺序和完成检查。' }).check()
+}
+
+async function runViewport(browser, config, baseUrl) {
   const context = await browser.newContext({
     ...(config.device ?? {}),
     viewport: config.viewport,
     locale: 'zh-CN',
   })
   const page = await context.newPage()
-  const results = []
+  const consoleErrors = []
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  page.on('pageerror', (error) => consoleErrors.push(error.message))
 
-  await page.goto(baseUrl)
-  results.push(await capture(page, config.name, 'home'))
+  try {
+    const metrics = []
+    await page.goto(`${baseUrl}/#home`)
+    metrics.push(await capture(page, config.name, 'home', '.home-hero', '#home'))
 
-  await page.locator('.home-entry .button').first().click()
-  results.push(await capture(page, config.name, 'learn'))
+    const field = await createExampleWorkflow(page, baseUrl)
+    metrics.push(await capture(page, config.name, 'field-paragraph', '.field-design-card', '#build/step-3'))
 
-  await page.locator('.learn-cta .button').click()
-  results.push(await capture(page, config.name, 'build-purpose'))
+    if (config.name === 'desktop-1440') {
+      await field.getByRole('radio', { name: /项目清单/ }).check()
+      metrics.push(await capture(page, config.name, 'field-bullet-list', '.field-design-card', '#build/step-3'))
+    }
+    await field.getByRole('radio', { name: /按步骤写/ }).check()
+    metrics.push(await capture(page, config.name, 'field-steps', '.field-design-card', '#build/step-3'))
 
-  await page.getByLabel('这个工作流服务哪个项目或任务？').fill('截图验收工作流')
-  await page.getByLabel('未来模型恢复时最容易丢失什么信息？').fill('当前目标、已验证事实和下一原子步骤。')
-  await page.getByLabel('恢复后希望模型立刻做什么？').fill('先读取 STATUS.html，再继续执行下一原子步骤。')
-  await page.getByRole('button', { name: '继续选择内容文档' }).click()
-  results.push(await capture(page, config.name, 'document-selection'))
+    await prepareProtocolReview(page)
+    metrics.push(await capture(page, config.name, 'protocol-review', '.protocol-step', '#build/step-4'))
+    await page.getByRole('button', { name: '确认入口协议并查看结果' }).click()
+    metrics.push(await capture(page, config.name, 'result-preview', '.result-step', '#build/step-5'))
+    await page.getByRole('button', { name: '演练并导出' }).click()
+    metrics.push(await capture(page, config.name, 'export', '.export-step', '#build/step-6'))
+    return metrics.map((item) => ({ ...item, consoleErrors }))
+  } finally {
+    await context.close()
+  }
+}
 
-  await page.getByLabel(/USER\.html/).check()
-  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
-  results.push(await capture(page, config.name, 'module-canvas'))
+async function canListen(port) {
+  const probe = createServer()
+  try {
+    await new Promise((resolve, reject) => {
+      probe.once('error', reject)
+      probe.listen(port, '127.0.0.1', resolve)
+    })
+    return true
+  } catch {
+    return false
+  } finally {
+    if (probe.listening) await new Promise((resolve) => probe.close(resolve))
+  }
+}
 
-  await markEveryContentDocumentReviewed(page)
-  await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
-  results.push(await capture(page, config.name, 'agents-draft-review'))
-
-  await page.getByRole('button', { name: '查看结果预览' }).click()
-  results.push(await capture(page, config.name, 'result-preview'))
-
-  await page.getByRole('button', { name: '进入演练与导出' }).click()
-  await page.getByRole('button', { name: '演练“新会话”' }).click()
-  results.push(await capture(page, config.name, 'guided-export'))
-
-  await page.getByRole('button', { name: '查看完整导出详情' }).click()
-  results.push(await capture(page, config.name, 'export'))
-
-  await context.close()
-  return results
+async function verifyPortReleased(port) {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (await canListen(port)) return
+    await sleep(150)
+  }
+  throw new Error(`Owned preview listener on port ${port} was not released after screenshot capture.`)
 }
 
 await mkdir(outputDir, { recursive: true })
-
-const browser = await chromium.launch()
-const allMetrics = []
+let preview
+let browser
+let metrics = []
+let releaseError = null
 try {
-  for (const viewport of viewports) {
-    allMetrics.push(...await runViewport(browser, viewport))
-  }
+  preview = await startPreview()
+  browser = await chromium.launch()
+  for (const viewport of viewports) metrics.push(...await runViewport(browser, viewport, preview.baseUrl))
 } finally {
-  await browser.close()
+  await browser?.close()
+  await preview?.stop()
+  if (preview?.port) {
+    try {
+      await verifyPortReleased(preview.port)
+    } catch (error) {
+      releaseError = error instanceof Error ? error.message : String(error)
+    }
+  }
 }
 
-await writeFile(path.join(outputDir, 'metrics.json'), `${JSON.stringify(allMetrics, null, 2)}\n`, 'utf8')
-const failures = allMetrics.filter((item) =>
+const failures = metrics.filter((item) =>
   item.horizontalOverflow > 0 ||
-  !item.pageStateCorrect ||
-  (item.expectedStep !== null && item.activeStepFullyVisible !== true) ||
-  item.onboardingRawTerms.length > 0 ||
-  item.protocolMapVisible ||
-  item.moduleChoiceContentOverflows > 0 ||
-  item.semanticUnitFailures.length > 0 ||
-  (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.moduleWorkbenchColumns > 2) ||
-  (item.label.includes(':module-canvas') && !item.label.startsWith('mobile:') && item.documentTabColumns > 2) ||
-  (item.label.startsWith('mobile:module-canvas') && item.documentTabColumns > 1) ||
-  (
-    ['document-selection', 'module-canvas', 'agents-draft-review'].some((state) => item.label.endsWith(state)) &&
-    !item.writeMapVisible
-  ),
+  !item.routeMatches ||
+  !item.expectedElementVisible ||
+  (item.label.includes(':field-') && (!item.selectedFormat || !item.selectedPreviewVisible)) ||
+  item.undersizedControls.length > 0 ||
+  item.overlappingControls.length > 0 ||
+  item.consoleErrors.length > 0,
 )
-if (failures.length > 0) {
-  throw new Error(`Screenshot acceptance failed: ${JSON.stringify(failures, null, 2)}`)
-}
-console.log(`Captured ${allMetrics.length} states into ${outputDir}`)
+const report = { generatedAt: new Date().toISOString(), baseUrl: preview?.baseUrl ?? externalUrl ?? null, releaseError, metrics, failures }
+await writeFile(path.join(outputDir, 'metrics.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8')
+if (releaseError || failures.length > 0) throw new Error(`Screenshot acceptance failed. See ${path.join(outputDir, 'metrics.json')}.`)
+console.log(`Captured ${metrics.length} current-flow states into ${outputDir}`)

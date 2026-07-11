@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 import {
+  displayFormatLabels,
   fieldModuleLibrary,
   sectionModuleLibrary,
   standardDocumentCards,
@@ -52,6 +53,10 @@ const formatCards: Array<{ id: Extract<DisplayFormatId, 'paragraph' | 'bullet-li
   { id: 'bullet-list', title: '项目清单', description: '适合没有先后顺序的事实、材料或检查项。' },
   { id: 'steps', title: '按步骤写', description: '适合必须按顺序执行或读取的动作。' },
 ]
+
+function isBeginnerDisplayFormat(format: DisplayFormatId | undefined): format is Extract<DisplayFormatId, 'paragraph' | 'bullet-list' | 'steps'> {
+  return format === 'paragraph' || format === 'bullet-list' || format === 'steps'
+}
 
 function parseRoute(hash = window.location.hash): Route {
   const value = hash.replace(/^#/, '')
@@ -89,6 +94,22 @@ function contentDocuments(workflow: WorkflowSchema): WorkflowDocument[] {
   return workflow.documents.filter((document) => document.role !== 'protocol')
 }
 
+function legacyContentCount(workflow: WorkflowSchema): number {
+  if (workflow.mode !== 'legacy-content') return 0
+  return contentDocuments(workflow)
+    .flatMap((document) => document.sections)
+    .flatMap((section) => section.fields)
+    .filter((field) => fieldValueToText(field.value).trim().length > 0)
+    .length
+}
+
+function legacyContentReferences(workflow: WorkflowSchema): Array<{ id: string; document: string; section: string; field: string }> {
+  if (workflow.mode !== 'legacy-content') return []
+  return contentDocuments(workflow).flatMap((document) => document.sections.flatMap((section) => section.fields
+    .filter((field) => fieldValueToText(field.value).trim().length > 0)
+    .map((field) => ({ id: `${document.id}/${section.id}/${field.id}`, document: document.filename, section: section.title, field: field.label }))))
+}
+
 function download(filename: string, content: BlobPart, mime = 'text/plain;charset=utf-8'): void {
   const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type: mime }))
   const link = document.createElement('a')
@@ -121,6 +142,8 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mainHeadingRef = useRef<HTMLHeadingElement>(null)
   const hasMountedRouteRef = useRef(false)
+  const currentLegacyContentCount = workflow ? legacyContentCount(workflow) : 0
+  const statusNeedsAttention = importInProgress || saveStatus === 'failed' || saveStatus === 'memory' || /失败|不可用|无法/.test(storageMessage)
 
   useEffect(() => { void initialize() }, [initialize])
   useEffect(() => {
@@ -155,7 +178,7 @@ function App() {
       <div className="header-actions">
         {workflow ? <details className="project-menu"><summary>项目 <ChevronRight size={15} aria-hidden="true" /></summary><div className="project-menu-panel">
           <p className="menu-label">本地项目</p>
-          {projects.map((project) => <button key={project.id} type="button" className={project.id === workflow.workflowId ? 'project-choice active' : 'project-choice'} onClick={() => void openProject(project.id)}><span>{project.name}</span><small>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
+          {projects.map((project) => <button key={project.id} type="button" className={project.id === workflow.workflowId ? 'project-choice active' : 'project-choice'} onClick={() => void openProject(project.id)}><span>{project.name}</span><small>{project.id === workflow.workflowId && currentLegacyContentCount > 0 ? `含 ${currentLegacyContentCount} 项旧版内容` : new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
           <div className="menu-rule" />
           <button type="button" onClick={() => void duplicateCurrentProject()}>复制当前项目</button>
           <button type="button" onClick={deleteCurrent}>删除当前项目</button>
@@ -170,7 +193,7 @@ function App() {
       {route.page === 'learn' ? <LearnPage headingRef={mainHeadingRef} onBuild={() => navigate({ page: 'build', step: 1 })} /> : null}
       {route.page === 'build' ? <BuildPage headingRef={mainHeadingRef} workflow={workflow} step={route.step} onNavigate={navigate} createStandard={createStandardProject} createBlank={createEmptyProject} openImporter={openImporter} /> : null}
     </main>
-    <div className="status-line" role="status" aria-live="polite">{storageMessage}</div>
+    <div className={statusNeedsAttention ? 'status-line' : 'status-line quiet'} role={statusNeedsAttention ? 'status' : undefined} aria-live={statusNeedsAttention ? 'polite' : 'off'}>{storageMessage}</div>
   </div>
 }
 
@@ -227,13 +250,17 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
   const content = useMemo(() => workflow ? contentDocuments(workflow) : [], [workflow])
   const protocolProjection = useMemo(() => workflow ? buildProtocolProjection(workflow) : null, [workflow])
   const protocolKey = workflow && protocolProjection
-    ? `${workflow.workflowId}:${protocolProjection.freshness}:${protocolProjection.generated?.document.id ?? 'none'}:${JSON.stringify(workflow.protocolState.supplements)}`
+    ? `${workflow.workflowId}:${workflow.updatedAt}:${protocolProjection.freshness}:${protocolProjection.generated?.document.id ?? 'none'}:${JSON.stringify(workflow.protocolState.supplements)}`
     : null
   const protocolConfirmed = Boolean(protocolKey && protocolKey === confirmedProtocolKey)
 
   useEffect(() => {
     if (!workflow && saveStatus !== 'loading' && step !== 1) onNavigate({ page: 'build', step: 1 }, true)
   }, [onNavigate, saveStatus, step, workflow])
+
+  useEffect(() => {
+    if (workflow?.readOnlyReason && step !== 6) onNavigate({ page: 'build', step: 6 }, true)
+  }, [onNavigate, step, workflow?.readOnlyReason])
 
   useEffect(() => {
     if (!content.some((document) => document.id === activeDocumentId)) {
@@ -265,9 +292,20 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
       })}
     </ol>
 
+    {workflow && legacyContentCount(workflow) > 0 ? <LegacyContentNotice workflow={workflow} showDetails={displayedStep >= 5} /> : null}
     {displayedStep === 1 ? <ProjectStartStep workflow={workflow} onCreateStandard={createStandard} onCreateBlank={createBlank} onNext={() => go(2)} openImporter={openImporter} /> : null}
     {displayedStep === 2 && workflow ? <DocumentSelectionStep workflow={workflow} onNext={() => go(3)} /> : null}
     {displayedStep >= 3 && workflow ? <BuildPagePlaceholder step={displayedStep} workflow={workflow} activeDocumentId={activeDocumentId} activeSectionId={activeSectionId} activeFieldId={activeFieldId} setActiveDocumentId={setActiveDocumentId} setActiveSectionId={setActiveSectionId} setActiveFieldId={setActiveFieldId} protocolConfirmed={protocolConfirmed} onProtocolConfirmed={() => { if (protocolKey) setConfirmedProtocolKey(protocolKey) }} onNavigate={go} /> : null}
+  </section>
+}
+
+function LegacyContentNotice({ workflow, showDetails }: { workflow: WorkflowSchema; showDetails: boolean }) {
+  const convertLegacyToTemplate = useWorkflowStore((state) => state.convertLegacyToTemplate)
+  const references = legacyContentReferences(workflow)
+  return <section className="legacy-content-notice" aria-label="旧版内容提示">
+    <AlertCircle size={20} aria-hidden="true" />
+    <div><strong>这份导入工作流保留了 {references.length} 项旧版项目内容。</strong><p>新手编辑器不会显示它们；在转换前，完整 ZIP 仍会保留并导出这些内容。转换会清空旧内容和旧限制，保留资料、章节、常驻填写说明与排版。建议先在项目菜单复制一份。</p>{showDetails ? <details className="legacy-content-details"><summary>查看会随完整 ZIP 保留的内容位置</summary><ul>{references.map((reference) => <li key={reference.id}><code>{reference.document}</code><span>{reference.section} / {reference.field}</span></li>)}</ul></details> : null}</div>
+    <button type="button" className="button secondary" onClick={() => { if (window.confirm('将当前项目转换为新的空模板吗？旧版项目内容和旧限制会被清空，且无法在当前项目中撤销。')) convertLegacyToTemplate() }}>转换为新的空模板</button>
   </section>
 }
 
@@ -426,6 +464,17 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
   const activeDocument = documents.find((document) => document.id === activeDocumentId) ?? documents[0]
   const activeSection = activeDocument?.sections.find((section) => section.id === activeSectionId) ?? activeDocument?.sections[0]
   const activeField = activeSection?.fields.find((field) => field.id === activeFieldId) ?? activeSection?.fields[0]
+  const fieldNameInputRef = useRef<HTMLInputElement>(null)
+  const [pendingFieldFocus, setPendingFieldFocus] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!pendingFieldFocus || activeField?.id !== pendingFieldFocus) return
+    const timer = window.setTimeout(() => {
+      fieldNameInputRef.current?.focus()
+      setPendingFieldFocus(null)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeField?.id, pendingFieldFocus])
 
   const chooseDocument = (document: WorkflowDocument) => {
     setActiveDocumentId(document.id)
@@ -440,12 +489,18 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
   const addManualField = () => {
     if (!activeDocument || !activeSection) return
     const fieldId = addField(activeDocument.id, activeSection.id)
-    if (fieldId) setActiveFieldId(fieldId)
+    if (fieldId) {
+      setActiveFieldId(fieldId)
+      setPendingFieldFocus(fieldId)
+    }
   }
   const addLibraryField = (moduleId: string) => {
     if (!activeDocument || !activeSection) return
     const fieldId = addFieldFromModule(activeDocument.id, activeSection.id, moduleId)
-    if (fieldId) setActiveFieldId(fieldId)
+    if (fieldId) {
+      setActiveFieldId(fieldId)
+      setPendingFieldFocus(fieldId)
+    }
   }
 
   if (!activeDocument) {
@@ -504,7 +559,7 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
           </div>)}
         </div>
         <div className="field-library"><p className="micro-label">常用信息项</p><p>这些只是可修改的起点。选中后仍可以改名字、填写说明和呈现方式。</p><div>{availableFieldModules.map((module) => <button type="button" key={module.id} className="library-choice" onClick={() => addLibraryField(module.id)}><strong>{module.label}</strong><small>{module.userBenefit}</small></button>)}</div></div>
-        {activeField ? <FieldDesignCard document={activeDocument} section={activeSection} field={activeField} onChange={(patch) => updateField(activeDocument.id, activeSection.id, activeField.id, patch)} /> : null}
+        {activeField ? <FieldDesignCard document={activeDocument} section={activeSection} field={activeField} nameInputRef={fieldNameInputRef} onChange={(patch) => updateField(activeDocument.id, activeSection.id, activeField.id, patch)} /> : null}
         <div className="section-footer"><button type="button" className="text-action danger-text" onClick={() => { if (window.confirm(`删除章节“${activeSection.title}”及其中的信息项吗？`)) { removeSection(activeDocument.id, activeSection.id); const next = activeDocument.sections.find((section) => section.id !== activeSection.id); setActiveSectionId(next?.id ?? null); setActiveFieldId(next?.fields[0]?.id ?? null) } }}>删除这一章</button></div>
       </section> : <section className="section-workspace"><p>先新建一个章节。</p></section>}
     </div>
@@ -512,26 +567,28 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
   </section>
 }
 
-function FieldDesignCard({ document, section, field, onChange }: {
+function FieldDesignCard({ document, section, field, nameInputRef, onChange }: {
   document: WorkflowDocument
   section: WorkflowDocument['sections'][number]
   field: WorkflowField
-  onChange: (patch: Pick<WorkflowField, 'label' | 'guidance' | 'displayFormat'>) => void
+  nameInputRef: React.RefObject<HTMLInputElement | null>
+  onChange: (patch: Pick<WorkflowField, 'label' | 'guidance'> & Partial<Pick<WorkflowField, 'displayFormat'>>) => void
 }) {
-  const selectedFormat: Extract<DisplayFormatId, 'paragraph' | 'bullet-list' | 'steps'> = field.displayFormat === 'bullet-list' || field.displayFormat === 'steps' ? field.displayFormat : 'paragraph'
+  const selectedFormat = isBeginnerDisplayFormat(field.displayFormat) ? field.displayFormat : undefined
+  const legacyFormat = field.displayFormat && !isBeginnerDisplayFormat(field.displayFormat) ? field.displayFormat : undefined
   return <section className="field-design-card" aria-labelledby="field-design-title">
     <div className="field-design-heading"><div><p className="micro-label">正在编辑的信息项</p><h4 id="field-design-title">{field.label}</h4><p>模板阶段不填写项目事实。现在只定义未来模型应当怎么记录这项信息。</p></div><span className="field-location">{document.filename} / {section.title}</span></div>
     <div className="form-grid field-form">
-      <label>信息项名称<input value={field.label} onChange={(event) => onChange({ label: event.target.value, guidance: field.guidance, displayFormat: selectedFormat })} /></label>
-      <label className="wide">常驻填写说明<textarea rows={3} value={field.guidance} onChange={(event) => onChange({ label: field.label, guidance: event.target.value, displayFormat: selectedFormat })} /></label>
+      <label>信息项名称<input ref={nameInputRef} value={field.label} onChange={(event) => onChange({ label: event.target.value, guidance: field.guidance })} /></label>
+      <label className="wide">常驻填写说明<textarea rows={3} value={field.guidance} onChange={(event) => onChange({ label: field.label, guidance: event.target.value })} /></label>
     </div>
-    <div className="format-area"><div><p className="micro-label">导出后怎么呈现</p><h4>选一种最容易读懂的排版</h4><p>下面的内容只是实时示例，不会写入你的模板。</p></div><div className="format-options" role="radiogroup" aria-label="导出后的呈现方式">
+    <div className="format-area"><div><p className="micro-label">导出后怎么呈现</p><h4>选一种最容易读懂的排版</h4><p>下面的内容只是实时示例，不会写入你的模板。</p></div>{legacyFormat ? <div className="legacy-format-note" role="status"><strong>旧版排版：{displayFormatLabels[legacyFormat]}</strong><p>这是导入包原有的呈现方式，目前会保持原样。只有主动选择下面的新排版，才会替换它。</p></div> : null}<div className="format-options" role="radiogroup" aria-label="导出后的呈现方式">
       {formatCards.map((format) => <label className={selectedFormat === format.id ? 'format-option selected' : 'format-option'} key={format.id}>
         <input type="radio" name={`format-${field.id}`} checked={selectedFormat === format.id} onChange={() => onChange({ label: field.label, guidance: field.guidance, displayFormat: format.id })} />
         <span><strong>{format.title}</strong><small>{format.description}</small><FormatSample format={format.id} /></span>
       </label>)}
     </div></div>
-    <p className="format-explanation"><Eye size={16} aria-hidden="true" />已选择<strong>{formatCards.find((format) => format.id === selectedFormat)?.title}</strong>。{formatCards.find((format) => format.id === selectedFormat)?.description}</p>
+    {selectedFormat ? <p className="format-explanation" role="status" aria-live="polite"><Eye size={16} aria-hidden="true" />已选择<strong>{formatCards.find((format) => format.id === selectedFormat)?.title}</strong>。{formatCards.find((format) => format.id === selectedFormat)?.description}</p> : null}
   </section>
 }
 
