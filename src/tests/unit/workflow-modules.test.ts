@@ -124,10 +124,38 @@ describe('Workflow Studio modular builder', () => {
     const zip = await createWorkflowZip(workflow)
 
     expect(readme).toContain('## 模块摘要')
+    expect(readme).toContain('### 标准模块')
+    expect(readme).toContain('### 自定义模块')
     expect(readme).toContain('STATUS.html')
     expect(zip.files['documents/AGENTS.md']).toBeTruthy()
     expect(zip.files['documents/AGENTS.html']).toBeUndefined()
     expect(zip.files['documents/STATUS.html']).toContain('data-guidance="true"')
+  })
+
+  it('separates custom modules from standard modules in README summaries', () => {
+    const workflow = createModularWorkflow({
+      name: '自定义模块摘要',
+      description: '检查 README 分类。',
+      selectedDocumentIds: ['status'],
+      firstAction: '读取 STATUS.html。',
+      recoveryRisk: '当前状态丢失。',
+    })
+    const status = workflow.documents.find((document) => document.role === 'status')
+    if (!status) throw new Error('missing status fixture')
+    status.sections.push({
+      id: 'custom-delivery-notes',
+      title: '交付备注',
+      purpose: '记录本项目的交付补充信息。',
+      lifecycle: 'realtime',
+      order: status.sections.length + 1,
+      repeatable: false,
+      fields: [],
+    })
+
+    const readme = exportReadme(workflow)
+
+    expect(readme).toMatch(/### 标准模块[\s\S]*当前目标与下一步/)
+    expect(readme).toMatch(/### 自定义模块[\s\S]*交付备注/)
   })
 
   it('regenerates a protocol draft without referencing unselected documents', () => {

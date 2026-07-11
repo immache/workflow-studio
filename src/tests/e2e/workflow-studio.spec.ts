@@ -366,6 +366,8 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await expect(structureDetails).toHaveAttribute('open', '')
   await expect(page.getByText('documents/AGENTS.md')).toBeVisible()
   await expect(page.getByText('documents/CONTEXT.html')).toBeVisible()
+  await expect(page.getByText('documents-md/AGENTS.md')).toBeVisible()
+  await expect(page.getByText('documents-md/CONTEXT.md')).toBeVisible()
   const statusFile = page.locator('.result-preview-grid .file-list li').filter({ hasText: 'documents/STATUS.html' })
   await expect(statusFile).toContainText(/\d+ 个章节、\d+ 个字段/)
   await expect(statusFile).toContainText('章节：本轮目标与接续动作')
@@ -394,6 +396,8 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   await expect(rehearsalResult).toBeVisible()
   await expect(page.locator('.builder-simulation-result')).toBeFocused()
   await expect(page.getByText(/实际读取|已读取/).last()).toBeVisible()
+  await expect(page.getByLabel('冲突裁决结果')).toContainText('冲突时信谁：最新明确用户指令')
+  await expect(page.getByLabel('冲突裁决结果')).toContainText('裁决理由')
   await expect(guidedDownload).toBeEnabled()
 
   const downloadPromise = page.waitForEvent('download')
@@ -406,6 +410,7 @@ test('builds a modular workflow through preview, rehearsal, and guided export', 
   expect(zip.file('workflow.json')).toBeTruthy()
   expect(zip.file('documents/AGENTS.md')).toBeTruthy()
   expect(zip.file('documents/STATUS.html')).toBeTruthy()
+  expect(zip.file('documents-md/AGENTS.md')).toBeTruthy()
 
   const importedWorkflow = JSON.parse(await zip.file('workflow.json')!.async('string')) as { workflowId: string; name: string }
   importedWorkflow.workflowId = 'imported-project-after-rehearsal'
@@ -453,6 +458,38 @@ test('allows a static workflow to omit STATUS.html and generates conditional rea
   await expect(readOrder).toHaveValue(/按需读取：MEMORY\.html/)
   await expect(readOrder).not.toHaveValue(/STATUS\.html/)
   await expect(page.locator('textarea[name="protocol-fallback-next-atomic-step-value"]')).toHaveValue('读取入口协议后核对稳定计划。')
+})
+
+test('returns to an existing module canvas without regenerating it', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  const firstField = page.locator('.module-section-editor').first().locator('.module-field-editor').first()
+  await firstField.getByLabel('当前内容').fill('回到文档选择后仍应保留这段内容。')
+  await page.getByRole('button', { name: '返回文档选择' }).click()
+  await expect(page).toHaveURL(/#build\/step-2$/)
+
+  let confirmationShown = false
+  page.once('dialog', () => { confirmationShown = true })
+  await page.getByRole('button', { name: '生成文档并进入模块画布' }).click()
+
+  await expect(page).toHaveURL(/#build\/step-3$/)
+  await expect(page.locator('.module-section-editor').first().locator('.module-field-editor').first().getByLabel('当前内容')).toHaveValue('回到文档选择后仍应保留这段内容。')
+  expect(confirmationShown).toBe(false)
+})
+
+test('offers a direct repair path when a rehearsal needs USER.html', async ({ page }) => {
+  await buildToModuleCanvas(page)
+  await markEveryContentDocumentReviewed(page)
+  await page.getByRole('button', { name: '生成并审查入口协议草案' }).click()
+  await page.getByRole('button', { name: '查看结果预览' }).click()
+  await page.getByRole('button', { name: '进入演练与导出' }).click()
+  await page.getByLabel('演练情境').selectOption('missing-preference')
+  await page.getByRole('button', { name: '演练“用户偏好缺失”' }).click()
+
+  await expect(page.getByText('需要先修复')).toBeVisible()
+  await page.getByRole('button', { name: '去选择 USER.html' }).click()
+
+  await expect(page).toHaveURL(/#build\/step-2$/)
+  await expect(page.getByLabel(/USER\.html/)).toBeChecked()
 })
 
 test('persists the builder draft and selected documents across a refresh', async ({ page }) => {

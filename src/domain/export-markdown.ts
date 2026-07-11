@@ -1,5 +1,12 @@
 import { projectDocumentNames, rewriteDocumentReferences, type DocumentNameProjection } from './export-naming'
 import { fieldValueToText, type MaintenanceFormat, type WorkflowDocument, type WorkflowField, type WorkflowSchema } from './schema'
+import { sectionModuleLibrary } from '../data/modules/standard-workflow-modules'
+
+const standardSectionModuleIds = new Set(sectionModuleLibrary.map((module) => module.id))
+
+function isStandardModule(sectionId: string): boolean {
+  return sectionId.startsWith('protocol-') || [...standardSectionModuleIds].some((id) => sectionId === id || sectionId.startsWith(`${id}-`))
+}
 
 function valueLines(value: string): string[] {
   return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
@@ -48,10 +55,24 @@ export function exportReadme(workflow: WorkflowSchema, format: MaintenanceFormat
   const projection = projectDocumentNames(workflow, format)
   const rewrite = (text: string) => rewriteDocumentReferences(text, projection)
   const files = workflow.documents.map((document) => `- \`${projection.byDocumentId.get(document.id)}\`：${rewrite(document.description)}`).join('\n')
-  const moduleSummary = workflow.documents.map((document) => {
-    const sections = document.sections.map((section) => `${rewrite(section.title)}（${section.fields.length} 个字段）`).join('；')
-    return `- \`${projection.byDocumentId.get(document.id)}\`：${sections || '暂无章节'}`
-  }).join('\n')
+  const moduleGroups = workflow.documents.reduce<{ standard: string[]; custom: string[] }>((groups, document) => {
+    const filename = projection.byDocumentId.get(document.id)
+    for (const section of document.sections) {
+      const entry = `- \`${filename}\` · ${rewrite(section.title)}（${section.fields.length} 个字段）`
+      if (isStandardModule(section.id)) groups.standard.push(entry)
+      else groups.custom.push(entry)
+    }
+    return groups
+  }, { standard: [], custom: [] })
+  const moduleSummary = [
+    '### 标准模块',
+    '',
+    moduleGroups.standard.join('\n') || '- 无。',
+    '',
+    '### 自定义模块',
+    '',
+    moduleGroups.custom.join('\n') || '- 无。',
+  ].join('\n')
   const recovery = workflow.rules.recoveryOrder.map((step, index) => {
     const document = workflow.documents.find((candidate) => candidate.id === step.documentId)
     return `${index + 1}. ${document ? projection.byDocumentId.get(document.id) : step.documentId} - ${rewrite(step.condition)}`

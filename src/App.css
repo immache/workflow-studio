@@ -904,6 +904,31 @@
   padding-left: 20px;
 }
 
+.simulation-conflicts {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.simulation-conflicts article {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--paper-soft);
+}
+
+.simulation-conflicts p {
+  margin: 0;
+}
+
+.simulation-repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .document-card small {
   grid-column: 2;
   color: var(--muted);

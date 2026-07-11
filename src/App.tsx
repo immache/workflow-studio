@@ -102,6 +102,10 @@ function preferredScrollBehavior(): ScrollBehavior {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
 }
 
+function sameSet<T>(left: Set<T>, right: Set<T>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value))
+}
+
 function fieldErrorDescriptionId(fieldId: string): string {
   return `field-errors-${encodeURIComponent(fieldId || 'field')}`
 }
@@ -912,12 +916,33 @@ function BuildWizard({
     () => workflow.documents.filter((document) => document.role !== 'protocol'),
     [workflow.documents],
   )
+  const generatedContentDocumentIds = useMemo(() => new Set(
+    contentDocuments
+      .map((document) => document.id.replace(/^content-/, ''))
+      .filter((id): id is ContentDocumentId => standardDocumentCards.some((card) => card.id === id)),
+  ), [contentDocuments])
+  const canResumeExistingCanvas = hasBuilderProject && contentDocuments.length > 0 && (
+    generatedContentDocumentIds.size === 0 || sameSet(selectedContentDocs, generatedContentDocumentIds)
+  )
   const canvasDocument = contentDocuments.find((document) => document.id === selectedCanvasDocumentId) ?? contentDocuments[0]
   const protocolDocument = workflow.documents.find((document) => document.role === 'protocol')
   const canvasSection = canvasDocument?.sections.find((section) => section.id === selectedCanvasSectionId) ?? canvasDocument?.sections[0]
   const protocolSection = protocolDocument?.sections.find((section) => section.id === selectedProtocolSectionId) ?? protocolDocument?.sections[0]
   const validationIssues = useMemo(() => validateWorkflow(workflow), [workflow])
   const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, 'html'), [workflow])
+  const packagedPrimaryDocs = useMemo(
+    () => exportDocumentsForFormat(workflow, workflow.maintenanceFormat),
+    [workflow],
+  )
+  const packagedSecondaryDocs = useMemo(
+    () => workflow.secondaryFormat ? exportDocumentsForFormat(workflow, workflow.secondaryFormat) : {},
+    [workflow],
+  )
+  const packagedFileCount = Object.keys(packagedPrimaryDocs).length + Object.keys(packagedSecondaryDocs).length + 2
+  const secondaryDirectory = workflow.secondaryFormat === 'html' ? 'documents-html' : 'documents-md'
+  function sourceDocumentForPackage(filename: string, format: MaintenanceFormat): WorkflowDocument | undefined {
+    return workflow.documents.find((document) => projectDocumentFilename(document, format) === filename)
+  }
   const defaultPreview = Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
   const selectedPreview = previewFilename && primaryDocs[previewFilename]
     ? [previewFilename, primaryDocs[previewFilename]] as const
@@ -1124,7 +1149,15 @@ function BuildWizard({
       setGeneratedMessage('第一动作仍引用未选择的文档。请重新选择这些文档，或返回上一步修改第一动作。')
       return
     }
-    if (hasBuilderProject && !window.confirm('重新生成文档会替换当前模块画布和入口协议草案。确认放弃现有搭建内容并继续？')) return
+    if (canResumeExistingCanvas) {
+      setGeneratedMessage('已保留现有模块画布和入口协议草案。你可以继续编辑，不会重新生成或丢失内容。')
+      goToStep(nextStep)
+      return
+    }
+    if (hasBuilderProject && !window.confirm('已更改内容文档选择。重新生成会替换当前模块画布和入口协议草案。确认放弃现有搭建内容并继续？')) {
+      setGeneratedMessage('已保留现有模块画布。若要替换文档组合，请再次确认重新生成。')
+      return
+    }
     setIsGenerating(true)
     try {
       await createModularProject({
@@ -1195,6 +1228,37 @@ function BuildWizard({
   function returnToFirstAction() {
     focusFirstActionOnStepRef.current = true
     goToStep(0)
+  }
+
+  function addDocumentForRepair(documentId: ContentDocumentId) {
+    const card = standardDocumentCards.find((item) => item.id === documentId)
+    if (!card) return
+    setSelectedContentDocs((current) => new Set([...current, documentId]))
+    setGeneratedMessage(`已将 ${card.filename} 加入文档选择。请确认用途后重新生成模块画布；系统会先要求你确认是否替换现有内容。`)
+    goToStep(1)
+  }
+
+  function openWorkEntryRepair() {
+    const targetDocument = contentDocuments.find((document) => document.role === 'status') ?? contentDocuments[0]
+    if (!targetDocument) {
+      addDocumentForRepair('status')
+      return
+    }
+    setSelectedCanvasDocumentId(targetDocument.id)
+    setSelectedCanvasSectionId(targetDocument.sections[0]?.id ?? '')
+    setLatestWriteTarget(`${targetDocument.filename} > 工作入口字段`)
+    setGeneratedMessage(`请在 ${targetDocument.filename} 中添加“工作入口”字段，并写清实际工作目录、worktree 或其他入口。`)
+    goToStep(2)
+    window.setTimeout(() => scrollToEditor(canvasEditorStartRef.current), 0)
+  }
+
+  function openSourcePriorityRepair() {
+    onAdvanced('rules')
+  }
+
+  function openProtocolRepair(message: string) {
+    setGeneratedMessage(message)
+    goToStep(3)
   }
 
   function addSectionModule(moduleId: string) {
@@ -1809,7 +1873,7 @@ function BuildWizard({
                 </section>
                 <details className="result-support-details">
                   <summary>
-                    <span><strong>核对文件结构与恢复路径</strong><small>{Object.keys(primaryDocs).length + 2} 个导出文件 · {workflow.rules.recoveryOrder.length} 步读取路径</small></span>
+                    <span><strong>核对文件结构与恢复路径</strong><small>{packagedFileCount} 个导出文件 · {workflow.rules.recoveryOrder.length} 步读取路径</small></span>
                     <span className="details-action">展开核对</span>
                   </summary>
                   <div className="result-support-grid">
@@ -1818,18 +1882,27 @@ function BuildWizard({
                   <ul className="file-list">
                     <li><code>workflow.json</code><span>结构化事实源，可重新导入。</span></li>
                     <li><code>README.md</code><span>说明如何使用导出包。</span></li>
-                    {Object.keys(primaryDocs).map((filename) => {
-                      const source = workflow.documents.find((document) => document.filename === filename || (document.role !== 'protocol' && filename.replace(/\.html$/i, '') === document.filename.replace(/\.(html|md)$/i, '')))
+                    {Object.keys(packagedPrimaryDocs).map((filename) => {
+                      const source = sourceDocumentForPackage(filename, workflow.maintenanceFormat)
                       const fieldCount = source?.sections.reduce((total, section) => total + section.fields.length, 0) ?? 0
                       const sectionNames = source?.sections.map((section) => section.title).filter(Boolean) ?? []
                       return (
                         <li key={filename}>
                           <code>documents/{filename}</code>
-                          <span>{source?.title || '未命名文档'} · {sectionNames.length} 个章节、{fieldCount} 个字段</span>
+                          <span>主维护文件 · {source?.title || '未命名文档'} · {sectionNames.length} 个章节、{fieldCount} 个字段</span>
                           {sectionNames.length > 0 ? <small>章节：{sectionNames.join('、')}</small> : <small>暂未添加章节</small>}
                         </li>
                       )
                     })}
+                    {workflow.secondaryFormat ? Object.keys(packagedSecondaryDocs).map((filename) => {
+                      const source = sourceDocumentForPackage(filename, workflow.secondaryFormat!)
+                      return (
+                        <li key={`${secondaryDirectory}/${filename}`}>
+                          <code>{secondaryDirectory}/{filename}</code>
+                          <span>{workflow.secondaryFormat === 'html' ? 'HTML' : 'Markdown'} 镜像 · {source?.title || '未命名文档'}</span>
+                        </li>
+                      )
+                    }) : null}
                     </ul>
                   </section>
                   <section className="result-support-section">
@@ -1837,7 +1910,7 @@ function BuildWizard({
                     <ol className="read-order-list">
                     {workflow.rules.recoveryOrder.map((stepItem, index) => {
                       const document = workflow.documents.find((item) => item.id === stepItem.documentId)
-                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document ? projectDocumentFilename(document, 'html') : '未知文档'}</strong><small>{stepItem.condition}</small></li>
+                      return <li key={stepItem.id}><span>{index + 1}</span><strong>{document ? projectDocumentFilename(document, workflow.maintenanceFormat) : '未知文档'}</strong><small>{stepItem.condition}</small></li>
                     })}
                     </ol>
                   </section>
@@ -1910,12 +1983,39 @@ function BuildWizard({
                     </div>
                     <p><strong>下一步：</strong>{rehearsal.nextAtomicStep || '当前情境还不能推出明确的下一步。'}</p>
                     {rehearsal.readDocuments.length > 0 ? <p><strong>已读取：</strong>{rehearsal.readDocuments.join(' → ')}</p> : null}
+                    {rehearsal.conflicts.length > 0 ? (
+                      <section className="simulation-conflicts" aria-label="冲突裁决结果">
+                        <strong>冲突裁决</strong>
+                        {rehearsal.conflicts.map((conflict) => (
+                          <article key={conflict.id}>
+                            <p><strong>冲突：</strong>{conflict.description}</p>
+                            <p><strong>冲突时信谁：</strong>{conflict.selectedSource?.label ?? '无法裁决，需要人工确认。'}</p>
+                            <p><strong>裁决理由：</strong>{conflict.reason}</p>
+                          </article>
+                        ))}
+                      </section>
+                    ) : null}
                     {rehearsal.blockers.length > 0 ? (
                       <div className="simulation-blockers">
                         <strong>需要先修复</strong>
                         <ul>{rehearsal.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+                        <div className="simulation-repair-actions">
+                          {rehearsal.scenario === 'missing-preference' ? (
+                            contentDocuments.some((document) => document.role === 'preference')
+                              ? <button type="button" className="button button-secondary" onClick={() => openProtocolRepair('请在入口协议审查中确认 USER.html 已进入按需读取路径。')}>去审查 USER.html 的读取规则</button>
+                              : <button type="button" className="button button-secondary" onClick={() => addDocumentForRepair('user')}>去选择 USER.html</button>
+                          ) : null}
+                          {rehearsal.scenario === 'unclear-term' ? (
+                            contentDocuments.some((document) => document.role === 'context')
+                              ? <button type="button" className="button button-secondary" onClick={() => openProtocolRepair('请在入口协议审查中确认 CONTEXT.html 已进入按需读取路径。')}>去审查 CONTEXT.html 的读取规则</button>
+                              : <button type="button" className="button button-secondary" onClick={() => addDocumentForRepair('context')}>去选择 CONTEXT.html</button>
+                          ) : null}
+                          {rehearsal.scenario === 'unclear-work-entry' ? <button type="button" className="button button-secondary" onClick={openWorkEntryRepair}>去添加工作入口字段</button> : null}
+                          {rehearsal.blockers.some((blocker) => blocker.includes('全局来源优先级')) ? <button type="button" className="button button-secondary" onClick={openSourcePriorityRepair}>去编辑全局来源优先级</button> : null}
+                          {rehearsal.blockers.some((blocker) => blocker.includes('实时状态文档')) ? <button type="button" className="button button-secondary" onClick={() => addDocumentForRepair('status')}>去选择 STATUS.html</button> : null}
+                        </div>
                       </div>
-                    ) : <p>入口协议、所需文档和下一步已经形成可执行路径。</p>}
+                    ) : rehearsal.conflicts.length > 0 ? <p>已按全局来源优先级完成裁决；请核对上方来源、理由和下一步是否符合你的工作流。</p> : <p>入口协议、所需文档和下一步已经形成可执行路径。</p>}
                   </section>
                 ) : <p className="inline-empty">尚未演练。选择情境后点击上方按钮，结果会直接显示在这里。</p>}
               </section>
@@ -2987,6 +3087,11 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
   const [message, setMessage] = useState('')
   const [isExporting, setIsExporting] = useState(false)
   const primaryDocs = useMemo(() => exportDocumentsForFormat(workflow, workflow.maintenanceFormat), [workflow])
+  const secondaryDocs = useMemo(
+    () => workflow.secondaryFormat ? exportDocumentsForFormat(workflow, workflow.secondaryFormat) : {},
+    [workflow],
+  )
+  const secondaryDirectory = workflow.secondaryFormat === 'html' ? 'documents-html' : 'documents-md'
   const firstPreview = workflow.maintenanceFormat === 'html'
     ? Object.entries(primaryDocs).find(([filename]) => filename.endsWith('.html')) ?? Object.entries(primaryDocs)[0]
     : Object.entries(primaryDocs)[0]
@@ -3084,7 +3189,7 @@ function ExportCenter({ issues }: { issues: ValidationIssue[] }) {
             <li><code>workflow.json</code><span>完整结构，用于再次导入和继续编辑。</span></li>
             <li><code>README.md</code><span>告诉接手者如何使用这套工作流。</span></li>
             {Object.keys(primaryDocs).map((filename) => <li key={filename}><code>documents/{filename}</code><span>主维护格式文档，给未来模型直接阅读。</span></li>)}
-            {workflow.secondaryFormat ? <li><code>documents-{workflow.secondaryFormat === 'html' ? 'html' : 'md'}/…</code><span>次级格式备份。</span></li> : null}
+            {workflow.secondaryFormat ? Object.keys(secondaryDocs).map((filename) => <li key={`${secondaryDirectory}/${filename}`}><code>{secondaryDirectory}/{filename}</code><span>{workflow.secondaryFormat === 'html' ? 'HTML' : 'Markdown'} 镜像，和主维护文档一起导出。</span></li>) : null}
           </ul>
         </section>
         <section className="plain-panel">
