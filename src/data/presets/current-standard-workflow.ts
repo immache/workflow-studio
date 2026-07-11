@@ -288,7 +288,7 @@ export function createCurrentStandardWorkflow(): WorkflowSchema {
             guidance: '模型只替换 data-value 内容，不删除 data-guidance 常驻说明。',
             lifecycle: 'validation',
             required: true,
-            value: scalarValue('保留 data-field、data-guidance、data-value；空值使用 data-empty 标记。'),
+            value: scalarValue('保留 data-field、data-guidance、data-value、格式锁和 workflow-value 边界；只改写值槽子节点。'),
           }),
         ]),
       ],

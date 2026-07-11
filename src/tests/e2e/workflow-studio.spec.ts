@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Download, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { createCurrentStandardWorkflow } from '../../data/presets/current-standard-workflow'
 import { serializeWorkflowJson } from '../../domain/export-zip'
@@ -6,6 +6,13 @@ import { serializeWorkflowJson } from '../../domain/export-zip'
 async function expectNoSeriousAxeViolations(page: Page) {
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations.filter((violation) => ['critical', 'serious'].includes(violation.impact ?? ''))).toEqual([])
+}
+
+async function readDownload(download: Download): Promise<string> {
+  const stream = await download.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 async function startBlankWorkflow(page: Page) {
@@ -115,6 +122,22 @@ test('generates a protocol, previews files, rehearses a template, and exports JS
   await page.getByRole('button', { name: '下载完整 ZIP' }).click()
   expect((await zipDownload).suggestedFilename()).toMatch(/\.zip$/)
 
+  const htmlDownloadPromise = page.waitForEvent('download')
+  await page.locator('.reading-file-list button').last().click()
+  const html = await readDownload(await htmlDownloadPromise)
+  const exportedPreview = await page.context().newPage()
+  await exportedPreview.setContent(html)
+  const stepsShell = exportedPreview.locator('.value-shell[data-display-format="steps"]').first()
+  const stepsValue = stepsShell.locator(':scope > ol[data-edit-scope="children-only"]')
+  const stepsSkeleton = stepsShell.locator(':scope > .steps-skeleton')
+  await expect(stepsShell).toHaveAttribute('data-format-lock', 'true')
+  await expect(stepsValue).toHaveAttribute('data-allowed-child', 'li')
+  await expect(stepsSkeleton).toBeVisible()
+  await stepsValue.evaluate((element) => element.insertAdjacentHTML('beforeend', '<li>第一步</li>'))
+  await expect(stepsSkeleton).toBeHidden()
+  await expect(stepsValue).toBeVisible()
+  await exportedPreview.close()
+
   await page.getByRole('radio', { name: 'Markdown' }).check()
   const readingDownload = page.waitForEvent('download')
   await page.getByRole('button', { name: 'STATUS.md' }).click()
@@ -132,6 +155,45 @@ test('requires a protocol refresh after the document structure changes', async (
   await expect(page.getByRole('checkbox', { name: '我已核对资料、读取顺序和完成检查。' })).toBeDisabled()
   await page.getByRole('button', { name: '生成入口协议' }).click()
   await expect(page.getByRole('checkbox', { name: '我已核对资料、读取顺序和完成检查。' })).toBeEnabled()
+})
+
+test('lets the user reorder protocol rules, remove items, and restore the automatic arrangement', async ({ page }) => {
+  await buildOneCustomDocument(page)
+  await generateAndConfirmProtocol(page)
+  await page.locator('.build-progress li').nth(3).getByRole('button').click()
+
+  const readEditor = page.locator('.protocol-ordering-editor').filter({ has: page.getByRole('heading', { name: '开始时按什么顺序读' }) })
+  const sourceEditor = page.locator('.protocol-ordering-editor').filter({ has: page.getByRole('heading', { name: '冲突时先相信什么' }) })
+  const confirmation = page.getByRole('checkbox', { name: '我已核对资料、读取顺序和完成检查。' })
+  await expect(readEditor).toBeVisible()
+  await expect(sourceEditor).toBeVisible()
+  await expect(page.locator('.confirmation-state')).toBeVisible()
+
+  await sourceEditor.getByRole('button', { name: '上移 新鲜工作区事实' }).click()
+  await expect(sourceEditor.locator('.ordering-copy strong').first()).toHaveText('新鲜工作区事实')
+  await expect(page.locator('.warning-stack')).toContainText('最新用户指令不是最高优先级')
+  await expect(page.locator('.confirmation-state')).toHaveCount(0)
+  await expect(confirmation).not.toBeChecked()
+
+  const agentsRow = readEditor.locator('.protocol-ordering-item').filter({ hasText: 'AGENTS.md' })
+  await agentsRow.getByRole('button', { name: '移出', exact: true }).click()
+  await expect(page.locator('.warning-stack')).toContainText('入口协议已移出读取顺序')
+  await expect(confirmation).toBeEnabled()
+
+  const readRemoveButtons = readEditor.getByRole('button', { name: '移出', exact: true })
+  while (await readRemoveButtons.count()) await readRemoveButtons.first().click()
+  await expect(readEditor).toContainText('当前没有读取项')
+  await expect(confirmation).toBeDisabled()
+
+  await readEditor.locator('.ordering-removed summary').click()
+  await readEditor.locator('.ordering-removed li').filter({ hasText: 'AGENTS.md' }).getByRole('button', { name: '重新加入' }).click()
+  await expect(confirmation).toBeEnabled()
+
+  await page.getByRole('button', { name: '恢复自动安排' }).click()
+  await expect(readEditor.locator('.protocol-ordering-item')).toHaveCount(3)
+  await expect(sourceEditor.locator('.ordering-copy strong').first()).toHaveText('最新明确用户指令')
+  await expect(page.locator('.warning-stack')).toHaveCount(0)
+  await expectNoSeriousAxeViolations(page)
 })
 
 test('starts from the standard template and lets the user remove or add ordinary documents', async ({ page }) => {

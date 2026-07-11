@@ -316,11 +316,12 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
   } else if (!protocolDocuments.some((document) => workflow.rules.recoveryOrder[0]?.documentId === document.id)) {
     issues.push(
       issue({
-        severity: 'error',
+        severity: 'warning',
         title: '入口协议不是第一读取项',
-        message: '恢复顺序必须从入口协议开始，否则模型可能跳过总规则。',
+        message: '入口协议未排在第一位或已被移出；模型可能跳过总规则，请确认这是有意安排。',
         target: { documentId: protocolDocuments[0].id },
         ruleId: 'recovery-protocol-first',
+        canAccept: true,
       }),
     )
   }
@@ -440,11 +441,12 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
   for (const document of workflow.documents.filter((candidate) => candidate.role !== 'status' && candidate.role !== 'plan')) {
     if (!recoveryStepByDocumentId.has(document.id)) {
       issues.push(issue({
-        severity: 'error',
+        severity: 'warning',
         title: '文档未进入恢复路径',
         message: `${document.filename} 已包含在工作流中，但恢复顺序没有说明何时读取它。`,
         target: { documentId: document.id },
         ruleId: 'recovery-document-coverage',
+        canAccept: true,
       }))
     }
   }
@@ -452,11 +454,12 @@ export function validateWorkflow(workflow: WorkflowSchema): ValidationIssue[] {
     const recoveryStep = recoveryStepByDocumentId.get(document.id)
     if (!recoveryStep || !recoveryStep.required) {
       issues.push(issue({
-        severity: 'error',
+        severity: 'warning',
         title: '必读文档未进入恢复路径',
-        message: `${document.filename} 承担${document.role === 'status' ? '实时状态和下一步' : '长期计划和范围'}职责，必须作为必读项进入恢复顺序。`,
+        message: `${document.filename} 承担${document.role === 'status' ? '实时状态和下一步' : '长期计划和范围'}职责，但当前不是必读项；请确认这是有意安排。`,
         target: { documentId: document.id, ruleId: recoveryStep?.id },
         ruleId: 'recovery-required-document-order',
+        canAccept: true,
       }))
     }
   }

@@ -1,4 +1,5 @@
 import {
+  SCHEMA_VERSION,
   cloneWorkflowRules,
   contentDocuments,
   createField,
@@ -7,14 +8,26 @@ import {
   type ContentDocument,
   type ProtocolBundle,
   type ProtocolDiagnostic,
+  type ProtocolOrderingPreferences,
   type ProtocolProjection,
+  type ProtocolReadOrderPreference,
+  type ProtocolSourcePriorityPreference,
   type ProtocolState,
+  type SourceRef,
   type WorkflowRules,
   type WorkflowSchema,
 } from './schema'
 
 const PROTOCOL_GENERATOR_VERSION = '1' as const
-const PROTOCOL_TEMPLATE_REVISION = 'compact-agents-2' as const
+const PROTOCOL_TEMPLATE_REVISION = 'ordering-and-html-lock-3' as const
+
+export const SYSTEM_PROTOCOL_READ_ITEM_ID = 'protocol:system'
+export const LATEST_USER_SOURCE_KEY = 'builtin:latest-user-instruction'
+export const WORKSPACE_FACT_SOURCE_KEY = 'builtin:workspace-fact'
+
+export function documentOrderingKey(documentId: string): string {
+  return `document:${documentId}`
+}
 
 function ordered<T extends { id: string; order: number }>(items: readonly T[]): T[] {
   return [...items].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
@@ -109,8 +122,77 @@ export function sha256Hex(input: string): string {
   return [h0, h1, h2, h3, h4, h5, h6, h7].map((value) => value.toString(16).padStart(8, '0')).join('')
 }
 
-export function canonicalProtocolSource(workflow: Pick<WorkflowSchema, 'name' | 'description' | 'documents'>): string {
-  const documents = ordered(contentDocuments(workflow)).map((document) => ({
+function documentSourceType(document: ContentDocument): SourceRef['sourceType'] {
+  if (document.role === 'status') return 'current-status'
+  if (document.role === 'plan') return 'stable-plan'
+  if (document.role === 'preference') return 'user-preference'
+  if (document.role === 'history') return 'memory-history'
+  if (document.role === 'context') return 'context-reference'
+  return 'document-reference'
+}
+
+export function createDefaultProtocolOrderingPreferences(documents: readonly ContentDocument[]): ProtocolOrderingPreferences {
+  const orderedDocuments = ordered(documents)
+  const hasNormallyRequiredDocument = orderedDocuments.some((document) => document.role === 'status' || document.role === 'plan')
+  const readOrder: ProtocolReadOrderPreference[] = [
+    { itemId: SYSTEM_PROTOCOL_READ_ITEM_ID, enabled: true, required: true, order: 1 },
+    ...orderedDocuments.map((document, index) => ({
+      itemId: documentOrderingKey(document.id),
+      enabled: true,
+      required: document.role === 'status' || document.role === 'plan' || (index === 0 && !hasNormallyRequiredDocument),
+      order: index + 2,
+    })),
+  ]
+  const sourcePriority: ProtocolSourcePriorityPreference[] = [
+    { sourceKey: LATEST_USER_SOURCE_KEY, enabled: true, order: 1 },
+    { sourceKey: WORKSPACE_FACT_SOURCE_KEY, enabled: true, order: 2 },
+    ...orderedDocuments.map((document, index) => ({
+      sourceKey: documentOrderingKey(document.id),
+      enabled: true,
+      order: index + 3,
+    })),
+  ]
+  return { readOrder, sourcePriority }
+}
+
+export function reconcileProtocolOrderingPreferences(
+  documents: readonly ContentDocument[],
+  preferences?: ProtocolOrderingPreferences,
+): ProtocolOrderingPreferences {
+  const defaults = createDefaultProtocolOrderingPreferences(documents)
+  const merge = <T extends { order: number }>(
+    defaultItems: readonly T[],
+    savedItems: readonly T[] | undefined,
+    keyOf: (item: T) => string,
+  ): T[] => {
+    const defaultsByKey = new Map(defaultItems.map((item) => [keyOf(item), item]))
+    const seen = new Set<string>()
+    const merged: T[] = []
+    for (const saved of [...(savedItems ?? [])].sort((left, right) => left.order - right.order || keyOf(left).localeCompare(keyOf(right)))) {
+      const key = keyOf(saved)
+      const fallback = defaultsByKey.get(key)
+      if (!fallback || seen.has(key)) continue
+      seen.add(key)
+      merged.push({ ...fallback, ...saved })
+    }
+    for (const fallback of defaultItems) {
+      const key = keyOf(fallback)
+      if (!seen.has(key)) merged.push({ ...fallback })
+    }
+    return merged.map((item, index) => ({ ...item, order: index + 1 }))
+  }
+  return {
+    readOrder: merge(defaults.readOrder, preferences?.readOrder, (item) => item.itemId),
+    sourcePriority: merge(defaults.sourcePriority, preferences?.sourcePriority, (item) => item.sourceKey),
+  }
+}
+
+type ProtocolSourceInput = Pick<WorkflowSchema, 'name' | 'description' | 'documents'> & {
+  protocolState?: Pick<ProtocolState, 'orderingPreferences'>
+}
+
+function protocolSourceDocuments(workflow: Pick<WorkflowSchema, 'documents'>) {
+  return ordered(contentDocuments(workflow)).map((document) => ({
     id: document.id,
     filename: document.filename,
     title: document.title,
@@ -128,35 +210,82 @@ export function canonicalProtocolSource(workflow: Pick<WorkflowSchema, 'name' | 
       })),
     })),
   }))
+}
+
+export function previousProtocolSourceHash(workflow: Pick<WorkflowSchema, 'name' | 'description' | 'documents'>): string {
+  return sha256Hex(stableJson({
+    generatorVersion: PROTOCOL_GENERATOR_VERSION,
+    templateRevision: 'compact-agents-2',
+    name: workflow.name,
+    description: workflow.description,
+    documents: protocolSourceDocuments(workflow),
+  }))
+}
+
+export function canonicalProtocolSource(workflow: ProtocolSourceInput): string {
+  const documents = protocolSourceDocuments(workflow)
+  const orderingPreferences = reconcileProtocolOrderingPreferences(
+    contentDocuments(workflow),
+    workflow.protocolState?.orderingPreferences,
+  )
   return stableJson({
     generatorVersion: PROTOCOL_GENERATOR_VERSION,
     templateRevision: PROTOCOL_TEMPLATE_REVISION,
     name: workflow.name,
     description: workflow.description,
     documents,
+    orderingPreferences,
   })
 }
 
-export function protocolSourceHash(workflow: Pick<WorkflowSchema, 'name' | 'description' | 'documents'>): string {
+export function protocolSourceHash(workflow: ProtocolSourceInput): string {
   return sha256Hex(canonicalProtocolSource(workflow))
 }
 
-function defaultRules(documents: readonly ContentDocument[], protocolId: string): WorkflowRules {
+function defaultRules(
+  documents: readonly ContentDocument[],
+  protocolId: string,
+  preferences?: ProtocolOrderingPreferences,
+): WorkflowRules {
   const orderedDocuments = ordered(documents)
-  const priority: WorkflowRules['sourcePriority'][number]['orderedSources'] = [
-    { sourceType: 'latest-user-instruction' as const, label: '最新明确用户指令', priority: 0, recencyPolicy: 'prefer-newer' as const },
-    { sourceType: 'workspace-fact' as const, label: '新鲜工作区事实和工具输出', priority: 0, recencyPolicy: 'prefer-newer' as const },
-  ]
-  for (const document of orderedDocuments) {
-    const sourceType = document.role === 'status' ? 'current-status'
-      : document.role === 'plan' ? 'stable-plan'
-        : document.role === 'preference' ? 'user-preference'
-          : document.role === 'history' ? 'memory-history'
-            : document.role === 'context' ? 'context-reference'
-              : null
-    if (!sourceType) continue
-    priority.push({
-      sourceType,
+  const orderingPreferences = reconcileProtocolOrderingPreferences(orderedDocuments, preferences)
+  const documentsByKey = new Map(orderedDocuments.map((document) => [documentOrderingKey(document.id), document]))
+  const recoveryOrder: WorkflowRules['recoveryOrder'] = []
+  for (const preference of orderingPreferences.readOrder.filter((item) => item.enabled)) {
+    if (preference.itemId === SYSTEM_PROTOCOL_READ_ITEM_ID) {
+      recoveryOrder.push({
+        id: `recovery-${protocolId}`,
+        documentId: protocolId,
+        condition: '开始工作或恢复上下文时读取入口协议。',
+        required: preference.required,
+        fallbackStepIds: [],
+      })
+      continue
+    }
+    const document = documentsByKey.get(preference.itemId)
+    if (!document) continue
+    recoveryOrder.push({
+      id: `recovery-${document.id}`,
+      documentId: document.id,
+      condition: preference.required ? '开始工作时按当前顺序读取。' : '需要这份文档职责内的信息时读取。',
+      required: preference.required,
+      fallbackStepIds: [],
+    })
+  }
+  const sourcePriority: SourceRef[] = []
+  for (const preference of orderingPreferences.sourcePriority.filter((item) => item.enabled)) {
+    if (preference.sourceKey === LATEST_USER_SOURCE_KEY) {
+      sourcePriority.push({ sourceType: 'latest-user-instruction', label: '最新明确用户指令', priority: 0, recencyPolicy: 'prefer-newer' })
+      continue
+    }
+    if (preference.sourceKey === WORKSPACE_FACT_SOURCE_KEY) {
+      sourcePriority.push({ sourceType: 'workspace-fact', label: '新鲜工作区事实和工具输出', priority: 0, recencyPolicy: 'prefer-newer' })
+      continue
+    }
+    const document = documentsByKey.get(preference.sourceKey)
+    if (!document) continue
+    sourcePriority.push({
+      sourceType: documentSourceType(document),
       label: document.filename,
       documentId: document.id,
       priority: 0,
@@ -164,22 +293,13 @@ function defaultRules(documents: readonly ContentDocument[], protocolId: string)
     })
   }
   return {
-    recoveryOrder: [
-      { id: `recovery-${protocolId}`, documentId: protocolId, condition: '开始工作或恢复上下文时先读取入口协议。', required: true, fallbackStepIds: [] },
-      ...orderedDocuments.map((document, index) => ({
-        id: `recovery-${document.id}`,
-        documentId: document.id,
-        condition: index === 0 ? '入口协议后读取这份内容文档。' : '需要这份文档职责内的信息时读取。',
-        required: document.role === 'status' || document.role === 'plan' || (index === 0 && !orderedDocuments.some((item) => item.role === 'status' || item.role === 'plan')),
-        fallbackStepIds: [],
-      })),
-    ],
+    recoveryOrder,
     sourcePriority: [{
       id: 'global-source-priority',
       scope: 'global',
-      orderedSources: priority.map((source, index) => ({ ...source, priority: index + 1 })),
+      orderedSources: sourcePriority.map((source, index) => ({ ...source, priority: index + 1 })),
       tieBreaker: 'explicit-user-confirmation',
-      reason: '先按最新明确用户指令和新鲜工作区事实裁决，再按文档职责使用恢复资料。',
+      reason: '按入口协议审查中确认的顺序裁决；排在前面的来源优先。',
     }],
     updateTriggers: orderedDocuments.map((document) => ({
       id: `trigger-${document.id}`,
@@ -230,7 +350,10 @@ function sourcePriority(rules: WorkflowRules): string {
 
 function updateRules(rules: WorkflowRules, documents: readonly ContentDocument[]): string {
   const byId = new Map(documents.map((document) => [document.id, document.filename]))
-  return rules.updateTriggers.map((rule) => `${byId.get(rule.targetDocumentId) ?? rule.targetDocumentId}：${rule.requiredAction}`).join('\n')
+  return [
+    ...rules.updateTriggers.map((rule) => `${byId.get(rule.targetDocumentId) ?? rule.targetDocumentId}：${rule.requiredAction}`),
+    '编辑 HTML 时只改写标有 data-edit-scope="children-only" 的值槽内容；保留外壳、格式属性和 workflow-value 边界注释。',
+  ].join('\n')
 }
 
 function completionChecks(rules: WorkflowRules): string {
@@ -242,10 +365,13 @@ export function canGenerateSystemProtocol(workflow: Pick<WorkflowSchema, 'docume
   return documents.length > 0 && documents.every((document) => document.sections.some((section) => section.fields.length > 0))
 }
 
-export function createSystemProtocolBundle(workflow: Pick<WorkflowSchema, 'documents'>): ProtocolBundle {
+export function createSystemProtocolBundle(workflow: Pick<WorkflowSchema, 'documents'> & {
+  protocolState?: Pick<ProtocolState, 'orderingPreferences'>
+}): ProtocolBundle {
   const documents = ordered(contentDocuments(workflow))
   const protocolId = 'protocol-system'
-  const rules = defaultRules(documents, protocolId)
+  const rules = defaultRules(documents, protocolId, workflow.protocolState?.orderingPreferences)
+  const protocolRecoveryStep = rules.recoveryOrder.find((step) => step.documentId === protocolId)
   return {
     document: {
       id: protocolId,
@@ -254,10 +380,10 @@ export function createSystemProtocolBundle(workflow: Pick<WorkflowSchema, 'docum
       role: 'protocol',
       lifecycle: 'validation',
       description: '由已确认文档生成的工作入口协议。',
-      readPolicy: { whenToRead: ['开始工作、恢复上下文或怀疑信息过期时先读取。'], dependsOnDocumentIds: [], readOrderHint: 1 },
+      readPolicy: { whenToRead: ['按已确认的读取顺序和必读/按需设置使用。'], dependsOnDocumentIds: [], readOrderHint: 1 },
       updatePolicy: { updateTriggers: ['内容文档结构变化后重新生成。'], replacementMode: 'replace-current', staleInfoHandling: 'remove' },
       order: 1,
-      required: true,
+      required: protocolRecoveryStep?.required ?? false,
       sections: [
         {
           id: 'protocol-document-list', title: '文档职责', purpose: '列出每份文档负责的信息。', lifecycle: 'validation', order: 1, repeatable: false,
@@ -285,15 +411,21 @@ export function createSystemProtocolBundle(workflow: Pick<WorkflowSchema, 'docum
   }
 }
 
-export function createSystemProtocolState(workflow: Pick<WorkflowSchema, 'name' | 'description' | 'documents'>): ProtocolState {
+export function createSystemProtocolState(workflow: ProtocolSourceInput): ProtocolState {
   if (!canGenerateSystemProtocol(workflow)) return emptyProtocolState()
+  const orderingPreferences = reconcileProtocolOrderingPreferences(
+    contentDocuments(workflow),
+    workflow.protocolState?.orderingPreferences,
+  )
+  const source = { ...workflow, protocolState: { orderingPreferences } }
   return {
     system: {
       status: 'ready',
       generatorVersion: PROTOCOL_GENERATOR_VERSION,
-      sourceHash: protocolSourceHash(workflow),
-      bundle: createSystemProtocolBundle(workflow),
+      sourceHash: protocolSourceHash(source),
+      bundle: createSystemProtocolBundle(source),
     },
+    orderingPreferences,
     supplements: [],
   }
 }
@@ -382,6 +514,77 @@ function legacyBundle(state: ProtocolState, diagnostics: ProtocolDiagnostic[]): 
   return { document: structuredClone(selected), rules: cloneWorkflowRules(legacy.rules) }
 }
 
+function addOrderingDiagnostics(rules: WorkflowRules, diagnostics: ProtocolDiagnostic[]): void {
+  const recoveryOrder = rules.recoveryOrder
+  const globalSources = rules.sourcePriority.find((rule) => rule.scope === 'global')?.orderedSources ?? []
+  if (recoveryOrder.length === 0) {
+    diagnostics.push({
+      id: 'protocol-read-order-empty',
+      severity: 'error',
+      title: '读取顺序不能为空',
+      message: '请重新加入至少一项资料，模型才知道从哪里开始读取。',
+    })
+  } else {
+    const protocolIndex = recoveryOrder.findIndex((step) => step.documentId === 'protocol-system')
+    if (protocolIndex < 0) {
+      diagnostics.push({
+        id: 'protocol-read-order-without-agents',
+        severity: 'warning',
+        title: '入口协议已移出读取顺序',
+        message: '模型可能跳过整套工作规则；仍可继续，但建议重新加入 AGENTS.md。',
+      })
+    } else if (protocolIndex > 0) {
+      diagnostics.push({
+        id: 'protocol-read-order-agents-not-first',
+        severity: 'warning',
+        title: '入口协议不是第一读取项',
+        message: '模型会先读取其他资料，再读取总规则；请确认这是有意安排。',
+      })
+    }
+    if (!recoveryOrder.some((step) => step.required)) {
+      diagnostics.push({
+        id: 'protocol-read-order-no-required-item',
+        severity: 'warning',
+        title: '没有设置必读资料',
+        message: '所有资料都成为按需项，模型开始工作时可能没有明确的固定读取入口。',
+      })
+    }
+  }
+  if (globalSources.length === 0) {
+    diagnostics.push({
+      id: 'protocol-source-priority-empty',
+      severity: 'error',
+      title: '来源优先级不能为空',
+      message: '请重新加入至少一个来源，模型才能在信息冲突时作出判断。',
+    })
+    return
+  }
+  const userIndex = globalSources.findIndex((source) => source.sourceType === 'latest-user-instruction')
+  if (userIndex < 0) {
+    diagnostics.push({
+      id: 'protocol-source-without-user-instruction',
+      severity: 'warning',
+      title: '最新用户指令已移出来源优先级',
+      message: '模型可能优先采用旧资料；仍可继续，但请确认这是有意安排。',
+    })
+  } else if (userIndex > 0) {
+    diagnostics.push({
+      id: 'protocol-source-user-not-first',
+      severity: 'warning',
+      title: '最新用户指令不是最高优先级',
+      message: '发生冲突时，排在前面的来源会先被采用。',
+    })
+  }
+  if (!globalSources.some((source) => source.sourceType === 'workspace-fact')) {
+    diagnostics.push({
+      id: 'protocol-source-without-workspace-fact',
+      severity: 'warning',
+      title: '工作区事实已移出来源优先级',
+      message: '模型可能无法用新鲜的文件和工具结果纠正文档中的旧信息。',
+    })
+  }
+}
+
 export function buildProtocolProjection(workflow: Pick<WorkflowSchema, 'name' | 'description' | 'documents' | 'protocolState'>): ProtocolProjection {
   const diagnostics: ProtocolDiagnostic[] = []
   const sourceHash = protocolSourceHash(workflow)
@@ -391,6 +594,8 @@ export function buildProtocolProjection(workflow: Pick<WorkflowSchema, 'name' | 
     : null
   const freshness = system.status === 'empty' ? 'empty' : generated ? 'current' : 'stale'
   const manual = legacyBundle(workflow.protocolState, diagnostics)
+
+  if (generated && !manual) addOrderingDiagnostics(generated.rules, diagnostics)
 
   if (freshness === 'stale') {
     diagnostics.push({
@@ -459,6 +664,10 @@ function fallbackRules(): WorkflowRules {
 export function normalizeWorkflowForRuntime(workflow: Omit<WorkflowSchema, 'rules' | 'protocolProjection'> & Partial<Pick<WorkflowSchema, 'rules' | 'protocolProjection'>>): WorkflowSchema {
   const inputRules = workflow.rules
   const cloned = structuredClone(workflow) as Omit<WorkflowSchema, 'rules' | 'protocolProjection'>
+  cloned.protocolState.orderingPreferences = reconcileProtocolOrderingPreferences(
+    contentDocuments(cloned),
+    cloned.protocolState.orderingPreferences,
+  )
   const projection = buildProtocolProjection(cloned)
   const docs = contentDocuments(cloned)
   const fallback = inputRules
@@ -492,7 +701,7 @@ export function withRegeneratedSystemProtocol(workflow: WorkflowSchema): Workflo
 export function toPersistedWorkflow(workflow: WorkflowSchema): import('./schema').PersistedWorkflowSchema {
   const clonedState = structuredClone(workflow.protocolState)
   return {
-    schemaVersion: '1.1.0',
+    schemaVersion: SCHEMA_VERSION,
     sourceSchemaVersion: workflow.sourceSchemaVersion,
     readOnlyReason: workflow.readOnlyReason,
     workflowId: workflow.workflowId,

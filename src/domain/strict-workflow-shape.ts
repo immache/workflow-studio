@@ -15,7 +15,7 @@ const fieldTypes = ['shortText', 'longText', 'richText', 'select', 'multiSelect'
 const displayFormats = ['paragraph', 'bullet-list', 'checklist', 'steps', 'key-value', 'decision-table', 'timeline', 'code', 'path-list'] as const
 const newDisplayFormats = ['paragraph', 'bullet-list', 'steps'] as const
 const validationPredicates = ['non-empty', 'valid-path', 'valid-url', 'valid-email', 'matches-pattern', 'custom'] as const
-const sourceTypes = ['latest-user-instruction', 'workspace-fact', 'current-status', 'stable-plan', 'user-preference', 'session-history', 'memory-history', 'context-reference', 'older-history'] as const
+const sourceTypes = ['latest-user-instruction', 'workspace-fact', 'current-status', 'stable-plan', 'user-preference', 'session-history', 'memory-history', 'context-reference', 'older-history', 'document-reference'] as const
 const recencyPolicies = ['prefer-newer', 'ignore-recency', 'manual'] as const
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -165,6 +165,7 @@ function assertRules(value: unknown, label: string): void {
       assertNumber(source.priority, `${label}.source.priority`)
       assertOneOf(source.recencyPolicy, recencyPolicies, `${label}.source.recencyPolicy`)
       if (source.documentId !== undefined) assertString(source.documentId, `${label}.source.documentId`)
+      if (source.sourceType === 'document-reference' && source.documentId === undefined) throw new Error(`${label}.source.documentId 不能为空。`)
     }
   }
   for (const trigger of value.updateTriggers) {
@@ -219,7 +220,7 @@ function assertUniqueIds(value: UnknownRecord): void {
 export function assertWorkflowShape(value: unknown): asserts value is PersistedWorkflowSchema {
   if (!isRecord(value)) throw new Error('workflow.json 必须是对象。')
   if (value.schemaVersion !== SCHEMA_VERSION) throw new Error(`不支持 schemaVersion：${String(value.schemaVersion)}`)
-  if ('rules' in value) throw new Error('1.1.0 workflow.json 不接受顶层 rules。')
+  if ('rules' in value) throw new Error(`${SCHEMA_VERSION} workflow.json 不接受顶层 rules。`)
   if (value.sourceSchemaVersion !== undefined) assertString(value.sourceSchemaVersion, 'sourceSchemaVersion')
   if (value.readOnlyReason !== undefined) assertString(value.readOnlyReason, 'readOnlyReason')
   assertString(value.workflowId, 'workflowId')
@@ -242,6 +243,43 @@ export function assertWorkflowShape(value: unknown): asserts value is PersistedW
     if (!isRecord(value.protocolState.system.bundle.document)) throw new Error('protocolState.system.bundle.document 结构无效。')
     assertDocument(value.protocolState.system.bundle.document, 'protocolState.system.bundle.document', protocolRoles)
     assertRules(value.protocolState.system.bundle.rules, 'protocolState.system.bundle.rules')
+  }
+  if (!isRecord(value.protocolState.orderingPreferences)) throw new Error('protocolState.orderingPreferences 结构无效。')
+  assertRecordArray(value.protocolState.orderingPreferences.readOrder, 'protocolState.orderingPreferences.readOrder')
+  assertRecordArray(value.protocolState.orderingPreferences.sourcePriority, 'protocolState.orderingPreferences.sourcePriority')
+  const readItemIds: string[] = []
+  for (const item of value.protocolState.orderingPreferences.readOrder) {
+    assertString(item.itemId, 'protocolState.orderingPreferences.readOrder.itemId')
+    assertBoolean(item.enabled, 'protocolState.orderingPreferences.readOrder.enabled')
+    assertBoolean(item.required, 'protocolState.orderingPreferences.readOrder.required')
+    assertNumber(item.order, 'protocolState.orderingPreferences.readOrder.order')
+    if (item.itemId !== 'protocol:system' && !item.itemId.startsWith('document:')) throw new Error('protocolState.orderingPreferences.readOrder.itemId 无效。')
+    readItemIds.push(item.itemId)
+  }
+  const sourceKeys: string[] = []
+  for (const item of value.protocolState.orderingPreferences.sourcePriority) {
+    assertString(item.sourceKey, 'protocolState.orderingPreferences.sourcePriority.sourceKey')
+    assertBoolean(item.enabled, 'protocolState.orderingPreferences.sourcePriority.enabled')
+    assertNumber(item.order, 'protocolState.orderingPreferences.sourcePriority.order')
+    if (!item.sourceKey.startsWith('builtin:') && !item.sourceKey.startsWith('document:')) throw new Error('protocolState.orderingPreferences.sourcePriority.sourceKey 无效。')
+    sourceKeys.push(item.sourceKey)
+  }
+  const documentKeys = (value.documents as UnknownRecord[]).map((document) => `document:${String(document.id)}`)
+  const expectedReadKeys = new Set(['protocol:system', ...documentKeys])
+  const expectedSourceKeys = new Set(['builtin:latest-user-instruction', 'builtin:workspace-fact', ...documentKeys])
+  if (readItemIds.length !== expectedReadKeys.size || readItemIds.some((itemId) => !expectedReadKeys.has(itemId))) {
+    throw new Error('protocolState.orderingPreferences.readOrder 必须完整对应当前文档。')
+  }
+  if (sourceKeys.length !== expectedSourceKeys.size || sourceKeys.some((sourceKey) => !expectedSourceKeys.has(sourceKey))) {
+    throw new Error('protocolState.orderingPreferences.sourcePriority 必须完整对应当前来源。')
+  }
+  const readOrders = value.protocolState.orderingPreferences.readOrder.map((item) => Number(item.order)).sort((left, right) => left - right)
+  const sourceOrders = value.protocolState.orderingPreferences.sourcePriority.map((item) => Number(item.order)).sort((left, right) => left - right)
+  if (readOrders.some((order, index) => order !== index + 1) || sourceOrders.some((order, index) => order !== index + 1)) {
+    throw new Error('protocolState.orderingPreferences 的 order 必须从 1 连续递增。')
+  }
+  if (new Set(readItemIds).size !== readItemIds.length || new Set(sourceKeys).size !== sourceKeys.length) {
+    throw new Error('protocolState.orderingPreferences 中存在重复项。')
   }
   assertRecordArray(value.protocolState.supplements, 'protocolState.supplements')
   for (const supplement of value.protocolState.supplements) {

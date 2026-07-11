@@ -29,10 +29,24 @@ import {
 import { exportDocumentsForFormat } from './domain/export-documents'
 import { projectDocumentFilename } from './domain/export-naming'
 import { createWorkflowZip, packageName, serializeWorkflowJson } from './domain/export-zip'
-import { buildProtocolProjection } from './domain/protocol-state'
+import {
+  LATEST_USER_SOURCE_KEY,
+  SYSTEM_PROTOCOL_READ_ITEM_ID,
+  WORKSPACE_FACT_SOURCE_KEY,
+  buildProtocolProjection,
+} from './domain/protocol-state'
 import { simulateRecovery } from './domain/simulation'
 import { validateWorkflow } from './domain/validation'
-import { fieldValueToText, type DisplayFormatId, type SimulationScenario, type WorkflowDocument, type WorkflowField, type WorkflowSchema } from './domain/schema'
+import {
+  fieldValueToText,
+  type DisplayFormatId,
+  type ProtocolReadOrderPreference,
+  type ProtocolSourcePriorityPreference,
+  type SimulationScenario,
+  type WorkflowDocument,
+  type WorkflowField,
+  type WorkflowSchema,
+} from './domain/schema'
 import { useWorkflowStore } from './store/workflow-store'
 
 type Route = { page: 'home' | 'learn' | 'build'; step: number }
@@ -184,7 +198,7 @@ function App() {
           <button type="button" onClick={deleteCurrent}>删除当前项目</button>
         </div></details> : null}
         <button className="icon-button" type="button" title="导入 workflow.json 或 ZIP" aria-label="导入 workflow.json 或 ZIP" onClick={openImporter} disabled={importInProgress}><Upload size={17} aria-hidden="true" /></button>
-        <span className={`save-state ${saveStatus}`}>{saveStatus === 'saving' ? '保存中' : saveStatus === 'saved' ? '已保存' : saveStatus === 'memory' ? '仅内存' : '...'}</span>
+        <span className={`save-state ${saveStatus}`}>{saveStatus === 'saving' ? '保存中' : saveStatus === 'saved' ? '已保存' : saveStatus === 'memory' ? '仅内存' : '…'}</span>
       </div>
       <input ref={fileInputRef} className="visually-hidden" aria-label="选择要导入的文件" type="file" accept=".json,.zip" onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void importProject(file); event.currentTarget.value = '' }} />
     </header>
@@ -225,7 +239,7 @@ function LearnPage({ headingRef, onBuild }: { headingRef: React.RefObject<HTMLHe
       <section><span>01</span><div><h2>先确定资料，不要先填内容</h2><p>先选长期计划、当前状态、历史或术语解释等资料。它们的职责明确后，模型才知道应该把信息写到哪里。</p></div></section>
       <section><span>02</span><div><h2>章节决定主题，信息项决定记录什么</h2><p>章节是一组相关主题；信息项是模型未来会填写的一块内容。每项只需名称、说明和导出后的排版。</p></div></section>
       <section><span>03</span><div><h2>模板不是项目运行记录</h2><p>搭建时不填写项目事实。你是在留下空槽和长期说明，之后的模型才能按照说明安全填写。</p></div></section>
-      <section><span>04</span><div><h2>入口协议由结构生成</h2><p>当至少有一份资料和一个信息项后，系统会整理读取顺序、职责和完成检查。你可以审查和补充它，但不需要手填底层规则。</p></div></section>
+      <section><span>04</span><div><h2>入口协议由结构生成</h2><p>当至少有一份资料和一个信息项后，系统会整理职责和完成检查。你可以调整读取顺序与来源优先级，也可以补充通用提醒，不需要手填底层规则。</p></div></section>
     </div>
     <button type="button" className="button primary" onClick={onBuild}>开始搭建 <ChevronRight size={18} aria-hidden="true" /></button>
   </article>
@@ -250,7 +264,7 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
   const content = useMemo(() => workflow ? contentDocuments(workflow) : [], [workflow])
   const protocolProjection = useMemo(() => workflow ? buildProtocolProjection(workflow) : null, [workflow])
   const protocolKey = workflow && protocolProjection
-    ? `${workflow.workflowId}:${workflow.updatedAt}:${protocolProjection.freshness}:${protocolProjection.generated?.document.id ?? 'none'}:${JSON.stringify(workflow.protocolState.supplements)}`
+    ? `${workflow.workflowId}:${workflow.updatedAt}:${protocolProjection.freshness}:${workflow.protocolState.system.status === 'ready' ? workflow.protocolState.system.sourceHash : 'none'}:${JSON.stringify(workflow.protocolState.orderingPreferences)}:${JSON.stringify(workflow.protocolState.supplements)}`
     : null
   const protocolConfirmed = Boolean(protocolKey && protocolKey === confirmedProtocolKey)
 
@@ -605,17 +619,28 @@ function ProtocolReviewStep({ workflow, onEditDocument, confirmed, onConfirmed, 
   const addProtocolSupplement = useWorkflowStore((state) => state.addProtocolSupplement)
   const removeProtocolSupplement = useWorkflowStore((state) => state.removeProtocolSupplement)
   const selectLegacyProtocol = useWorkflowStore((state) => state.selectLegacyProtocol)
+  const moveProtocolReadItem = useWorkflowStore((state) => state.moveProtocolReadItem)
+  const updateProtocolReadItem = useWorkflowStore((state) => state.updateProtocolReadItem)
+  const moveProtocolSourceItem = useWorkflowStore((state) => state.moveProtocolSourceItem)
+  const updateProtocolSourceItem = useWorkflowStore((state) => state.updateProtocolSourceItem)
+  const resetProtocolOrdering = useWorkflowStore((state) => state.resetProtocolOrdering)
   const projection = useMemo(() => buildProtocolProjection(workflow), [workflow])
   const [acknowledged, setAcknowledged] = useState(false)
   const [addingSupplement, setAddingSupplement] = useState(false)
   const [supplementTitle, setSupplementTitle] = useState('')
   const [supplementInstruction, setSupplementInstruction] = useState('')
   const [supplementFormat, setSupplementFormat] = useState<Extract<DisplayFormatId, 'paragraph' | 'bullet-list' | 'steps'>>('paragraph')
-  const diagnostics = projection.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+  const blockingDiagnostics = projection.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+  const warningDiagnostics = projection.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning')
   const validationErrors = validateWorkflow(workflow).filter((issue) => issue.severity === 'error')
   const effective = projection.effective
   const content = contentDocuments(workflow)
   const legacy = workflow.protocolState.legacyManualOverride
+  const orderingEditable = !legacy
+
+  useEffect(() => {
+    setAcknowledged(false)
+  }, [workflow.protocolState.orderingPreferences, workflow.protocolState.system])
 
   const saveSupplement = () => {
     if (!supplementTitle.trim() || !supplementInstruction.trim()) return
@@ -644,34 +669,111 @@ function ProtocolReviewStep({ workflow, onEditDocument, confirmed, onConfirmed, 
       </div>
     </section> : null}
 
-    {diagnostics.length > 0 ? <div className="issue-stack" role="alert">{diagnostics.map((diagnostic) => <article key={diagnostic.id}><AlertCircle size={18} aria-hidden="true" /><div><strong>{diagnostic.title}</strong><p>{diagnostic.message}</p></div></article>)}</div> : null}
+    {blockingDiagnostics.length > 0 ? <div className="issue-stack" role="alert">{blockingDiagnostics.map((diagnostic) => <article key={diagnostic.id}><AlertCircle size={18} aria-hidden="true" /><div><strong>{diagnostic.title}</strong><p>{diagnostic.message}</p></div></article>)}</div> : null}
+    {warningDiagnostics.length > 0 ? <div className="issue-stack warning-stack" role="status">{warningDiagnostics.map((diagnostic) => <article key={diagnostic.id}><AlertCircle size={18} aria-hidden="true" /><div><strong>{diagnostic.title}</strong><p>{diagnostic.message}</p></div></article>)}</div> : null}
 
     {effective ? <>
-      <div className="protocol-review-grid">
+      <div className="protocol-review-grid protocol-review-summary">
         <ProtocolReviewPanel title="要读哪些资料" description="每份资料只负责自己的信息。" icon={<FileText size={19} aria-hidden="true" />}>
           <ul className="protocol-document-list">{content.map((document) => <li key={document.id}><div><strong>{document.filename}</strong><span>{document.description}</span></div><button type="button" className="text-action" onClick={() => onEditDocument(document.id)}>回到资料修改</button></li>)}</ul>
-        </ProtocolReviewPanel>
-        <ProtocolReviewPanel title="按什么顺序读" description="系统根据资料职责安排恢复顺序。" icon={<ListOrdered size={19} aria-hidden="true" />}>
-          <ProtocolSectionValue document={effective.document} sectionId="protocol-read-order" fallbackIndex={1} />
         </ProtocolReviewPanel>
         <ProtocolReviewPanel title="完成前检查什么" description="它会提醒模型验证结果并维护仍有效的资料。" icon={<List size={19} aria-hidden="true" />}>
           <ProtocolSectionValue document={effective.document} sectionId="protocol-completion" fallbackIndex={4} />
         </ProtocolReviewPanel>
       </div>
-      <details className="protocol-details"><summary>查看来源优先级和维护规则</summary><div className="protocol-details-grid"><ProtocolSectionValue document={effective.document} sectionId="protocol-source-priority" fallbackIndex={2} /><ProtocolSectionValue document={effective.document} sectionId="protocol-update-rules" fallbackIndex={3} /></div></details>
+      {orderingEditable ? <section className="protocol-ordering-section" aria-labelledby="protocol-ordering-title">
+        <div className="protocol-ordering-heading"><div><p className="micro-label">模型的读取规则</p><h3 id="protocol-ordering-title">按你的需要安排顺序</h3><p>上面的资料内容不变；这里只决定模型先读什么，以及发生冲突时先相信什么。</p></div><button type="button" className="button text" onClick={resetProtocolOrdering}><RefreshCw size={16} aria-hidden="true" />恢复自动安排</button></div>
+        <div className="protocol-ordering-grid">
+          <ProtocolReadOrderEditor items={workflow.protocolState.orderingPreferences.readOrder} documents={content} onMove={moveProtocolReadItem} onUpdate={updateProtocolReadItem} />
+          <ProtocolSourceOrderEditor items={workflow.protocolState.orderingPreferences.sourcePriority} documents={content} onMove={moveProtocolSourceItem} onUpdate={updateProtocolSourceItem} />
+        </div>
+      </section> : <div className="protocol-review-grid legacy-protocol-rules"><ProtocolReviewPanel title="按什么顺序读" description="旧版协议保留原有读取安排。" icon={<ListOrdered size={19} aria-hidden="true" />}><ProtocolSectionValue document={effective.document} sectionId="protocol-read-order" fallbackIndex={1} /></ProtocolReviewPanel><ProtocolReviewPanel title="来源优先级" description="旧版协议保留原有冲突裁决顺序。" icon={<List size={19} aria-hidden="true" />}><ProtocolSectionValue document={effective.document} sectionId="protocol-source-priority" fallbackIndex={2} /></ProtocolReviewPanel></div>}
+      <details className="protocol-details"><summary>查看自动生成的维护规则</summary><div className="protocol-details-grid single"><ProtocolSectionValue document={effective.document} sectionId="protocol-update-rules" fallbackIndex={3} /></div></details>
     </> : <div className="empty-protocol"><p>入口协议还不能生成。回到资料页面，至少保留一份资料，并在每份资料中添加一个信息项。</p><button type="button" className="button secondary" onClick={() => content[0] && onEditDocument(content[0].id)}>回到资料搭建</button></div>}
 
     {workflow.protocolState.supplements.length > 0 ? <section className="supplement-list" aria-labelledby="supplement-title"><div><p className="micro-label">已添加的额外说明</p><h3 id="supplement-title">只保留无法归入某份资料的通用提醒</h3></div>{workflow.protocolState.supplements.map((supplement) => <article key={supplement.id}><div><strong>{supplement.title}</strong><p>{supplement.instruction}</p></div><button type="button" className="text-action danger-text" onClick={() => removeProtocolSupplement(supplement.id)}>删除</button></article>)}</section> : null}
     {addingSupplement ? <section className="supplement-form" aria-labelledby="supplement-form-title"><h3 id="supplement-form-title">添加一条额外说明</h3><p>仅用于不能归入某份资料的通用提醒；属于某份资料的内容应回到原资料修改。</p><div className="form-grid"><label>说明标题<input value={supplementTitle} onChange={(event) => setSupplementTitle(event.target.value)} /></label><label className="wide">说明正文<textarea rows={3} value={supplementInstruction} onChange={(event) => setSupplementInstruction(event.target.value)} /></label></div><div className="compact-format-options" role="radiogroup" aria-label="补充说明的呈现方式">{formatCards.map((format) => <label key={format.id}><input type="radio" name="supplement-format" checked={supplementFormat === format.id} onChange={() => setSupplementFormat(format.id)} /><span><strong>{format.title}</strong><small>{format.description}</small></span></label>)}</div><div className="step-actions"><button type="button" className="button primary" disabled={!supplementTitle.trim() || !supplementInstruction.trim()} onClick={saveSupplement}>保存说明</button><button type="button" className="button text" onClick={() => setAddingSupplement(false)}>取消</button></div></section> : <button type="button" className="button text add-supplement" onClick={() => setAddingSupplement(true)}><Plus size={17} aria-hidden="true" />添加一条额外说明</button>}
 
     {validationErrors.length > 0 ? <div className="validation-hint"><AlertCircle size={18} aria-hidden="true" /><div><strong>还不能确认入口协议</strong><p>{validationErrors[0].message}</p></div></div> : null}
-    <label className="confirmation-check"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={!effective || diagnostics.length > 0 || validationErrors.length > 0} /><span>我已核对资料、读取顺序和完成检查。</span></label>
-    <div className="step-actions"><button type="button" className="button primary" disabled={!effective || diagnostics.length > 0 || validationErrors.length > 0 || !acknowledged} onClick={() => { onConfirmed(); onNext() }}>确认入口协议并查看结果 <ChevronRight size={17} aria-hidden="true" /></button>{confirmed ? <span className="confirmation-state">已在当前结构下确认</span> : null}</div>
+    <label className="confirmation-check"><input type="checkbox" name="protocol-reviewed" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={!effective || blockingDiagnostics.length > 0 || validationErrors.length > 0} /><span>我已核对资料、读取顺序和完成检查。</span></label>
+    <div className="step-actions"><button type="button" className="button primary" disabled={!effective || blockingDiagnostics.length > 0 || validationErrors.length > 0 || !acknowledged} onClick={() => { onConfirmed(); onNext() }}>确认入口协议并查看结果 <ChevronRight size={17} aria-hidden="true" /></button>{confirmed ? <span className="confirmation-state">已在当前结构下确认</span> : null}</div>
   </section>
 }
 
 function ProtocolReviewPanel({ title, description, icon, children }: { title: string; description: string; icon: React.ReactNode; children: React.ReactNode }) {
   return <section className="protocol-review-panel"><div className="protocol-panel-heading">{icon}<div><h3>{title}</h3><p>{description}</p></div></div>{children}</section>
+}
+
+function ProtocolReadOrderEditor({ items, documents, onMove, onUpdate }: {
+  items: ProtocolReadOrderPreference[]
+  documents: WorkflowDocument[]
+  onMove: (itemId: string, direction: -1 | 1) => void
+  onUpdate: (itemId: string, patch: Partial<Pick<ProtocolReadOrderPreference, 'enabled' | 'required'>>) => void
+}) {
+  const orderedItems = [...items].sort((left, right) => left.order - right.order)
+  const activeItems = orderedItems.filter((item) => item.enabled)
+  const removedItems = orderedItems.filter((item) => !item.enabled)
+  const describe = (itemId: string) => {
+    if (itemId === SYSTEM_PROTOCOL_READ_ITEM_ID) return { label: 'AGENTS.md', description: '整套工作流的入口规则。' }
+    const document = documents.find((candidate) => itemId === `document:${candidate.id}`)
+    return { label: document?.filename ?? itemId, description: document?.description ?? '当前工作流中的资料。' }
+  }
+
+  return <section className="protocol-ordering-editor" aria-labelledby="read-order-editor-title">
+    <header><span className="ordering-editor-number">01</span><div><h4 id="read-order-editor-title">开始时按什么顺序读</h4><p>“必读”会在开始工作时读取；“按需”只在用到相关信息时读取。</p></div></header>
+    {activeItems.length > 0 ? <ol className="protocol-ordering-list">
+      {activeItems.map((item, index) => {
+        const copy = describe(item.itemId)
+        return <li key={item.itemId} className="protocol-ordering-item">
+          <span className="ordering-rank" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+          <div className="ordering-copy"><strong>{copy.label}</strong><small>{copy.description}</small></div>
+          <div className="ordering-controls">
+            <button type="button" className="ordering-icon-button" title={`上移 ${copy.label}`} aria-label={`上移 ${copy.label}`} disabled={index === 0} onClick={() => onMove(item.itemId, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
+            <button type="button" className="ordering-icon-button" title={`下移 ${copy.label}`} aria-label={`下移 ${copy.label}`} disabled={index === activeItems.length - 1} onClick={() => onMove(item.itemId, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
+            <label className="required-toggle"><input type="checkbox" name={`required-${item.itemId}`} checked={item.required} onChange={(event) => onUpdate(item.itemId, { required: event.target.checked })} /><span>{item.required ? '必读' : '按需'}</span></label>
+            <button type="button" className="ordering-remove" onClick={() => onUpdate(item.itemId, { enabled: false })}>移出</button>
+          </div>
+        </li>
+      })}
+    </ol> : <p className="ordering-empty">当前没有读取项。重新加入至少一项后才能确认和导出。</p>}
+    {removedItems.length > 0 ? <details className="ordering-removed"><summary>已移出 {removedItems.length} 项</summary><ul>{removedItems.map((item) => { const copy = describe(item.itemId); return <li key={item.itemId}><div><strong>{copy.label}</strong><small>{copy.description}</small></div><button type="button" className="text-action" onClick={() => onUpdate(item.itemId, { enabled: true })}><Plus size={15} aria-hidden="true" />重新加入</button></li> })}</ul></details> : null}
+  </section>
+}
+
+function ProtocolSourceOrderEditor({ items, documents, onMove, onUpdate }: {
+  items: ProtocolSourcePriorityPreference[]
+  documents: WorkflowDocument[]
+  onMove: (sourceKey: string, direction: -1 | 1) => void
+  onUpdate: (sourceKey: string, patch: Partial<Pick<ProtocolSourcePriorityPreference, 'enabled'>>) => void
+}) {
+  const orderedItems = [...items].sort((left, right) => left.order - right.order)
+  const activeItems = orderedItems.filter((item) => item.enabled)
+  const removedItems = orderedItems.filter((item) => !item.enabled)
+  const describe = (sourceKey: string) => {
+    if (sourceKey === LATEST_USER_SOURCE_KEY) return { label: '最新明确用户指令', description: '用户刚刚明确提出的要求。' }
+    if (sourceKey === WORKSPACE_FACT_SOURCE_KEY) return { label: '新鲜工作区事实', description: '文件、测试和工具输出反映的最新事实。' }
+    const document = documents.find((candidate) => sourceKey === `document:${candidate.id}`)
+    return { label: document?.filename ?? sourceKey, description: document?.description ?? '当前工作流中的资料。' }
+  }
+
+  return <section className="protocol-ordering-editor" aria-labelledby="source-order-editor-title">
+    <header><span className="ordering-editor-number">02</span><div><h4 id="source-order-editor-title">冲突时先相信什么</h4><p>同一件事说法不同时，排在前面的来源先用于判断。</p></div></header>
+    {activeItems.length > 0 ? <ol className="protocol-ordering-list">
+      {activeItems.map((item, index) => {
+        const copy = describe(item.sourceKey)
+        return <li key={item.sourceKey} className="protocol-ordering-item">
+          <span className="ordering-rank" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+          <div className="ordering-copy"><strong>{copy.label}</strong><small>{copy.description}</small></div>
+          <div className="ordering-controls">
+            <button type="button" className="ordering-icon-button" title={`上移 ${copy.label}`} aria-label={`上移 ${copy.label}`} disabled={index === 0} onClick={() => onMove(item.sourceKey, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
+            <button type="button" className="ordering-icon-button" title={`下移 ${copy.label}`} aria-label={`下移 ${copy.label}`} disabled={index === activeItems.length - 1} onClick={() => onMove(item.sourceKey, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
+            <button type="button" className="ordering-remove" onClick={() => onUpdate(item.sourceKey, { enabled: false })}>移出</button>
+          </div>
+        </li>
+      })}
+    </ol> : <p className="ordering-empty">当前没有来源。重新加入至少一个来源后才能确认和导出。</p>}
+    {removedItems.length > 0 ? <details className="ordering-removed"><summary>已移出 {removedItems.length} 项</summary><ul>{removedItems.map((item) => { const copy = describe(item.sourceKey); return <li key={item.sourceKey}><div><strong>{copy.label}</strong><small>{copy.description}</small></div><button type="button" className="text-action" onClick={() => onUpdate(item.sourceKey, { enabled: true })}><Plus size={15} aria-hidden="true" />重新加入</button></li> })}</ul></details> : null}
+  </section>
 }
 
 function ProtocolSectionValue({ document, sectionId, fallbackIndex }: { document: WorkflowDocument; sectionId: string; fallbackIndex: number }) {

@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { createCurrentStandardWorkflow } from '../../data/presets/current-standard-workflow'
 import { createModularWorkflow } from '../../data/modules/standard-workflow-modules'
-import { buildProtocolProjection, normalizeWorkflowForRuntime, sha256Hex, toPersistedWorkflow, withRegeneratedSystemProtocol } from '../../domain/protocol-state'
+import {
+  SYSTEM_PROTOCOL_READ_ITEM_ID,
+  WORKSPACE_FACT_SOURCE_KEY,
+  buildProtocolProjection,
+  normalizeWorkflowForRuntime,
+  previousProtocolSourceHash,
+  sha256Hex,
+  toPersistedWorkflow,
+  withRegeneratedSystemProtocol,
+} from '../../domain/protocol-state'
 import { exportHtmlDocuments } from '../../domain/export-html'
 import { exportMarkdownDocuments } from '../../domain/export-markdown'
 import { createWorkflowZip, serializeWorkflowJson } from '../../domain/export-zip'
@@ -23,6 +32,14 @@ function legacyV10() {
   }
 }
 
+function previousV11() {
+  const previous = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
+  previous.schemaVersion = '1.1.0'
+  delete previous.protocolState.orderingPreferences
+  previous.protocolState.system.sourceHash = previousProtocolSourceHash(previous)
+  return previous
+}
+
 function copyProtocolWithNewIds(protocol: ReturnType<typeof createCurrentStandardWorkflow>['documents'][number]) {
   return {
     ...structuredClone(protocol),
@@ -39,7 +56,7 @@ function copyProtocolWithNewIds(protocol: ReturnType<typeof createCurrentStandar
   }
 }
 
-describe('Workflow Studio 1.1 data semantics', () => {
+describe('Workflow Studio 1.2 data semantics', () => {
   it('uses SHA-256 for stable protocol source fingerprints', () => {
     expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
   })
@@ -48,7 +65,7 @@ describe('Workflow Studio 1.1 data semantics', () => {
     const workflow = createCurrentStandardWorkflow()
     const persisted = toPersistedWorkflow(workflow)
 
-    expect(workflow.schemaVersion).toBe('1.1.0')
+    expect(workflow.schemaVersion).toBe('1.2.0')
     expect(workflow.mode).toBe('template')
     expect(workflow.documents[0]).toMatchObject({ filename: 'AGENTS.md', role: 'protocol' })
     expect(workflow.documents.filter((document) => document.role !== 'protocol')
@@ -65,12 +82,39 @@ describe('Workflow Studio 1.1 data semantics', () => {
     const imported = await parseWorkflowJson(JSON.stringify(legacyV10()))
     const legacy = imported.protocolState.legacyManualOverride
 
-    expect(imported.schemaVersion).toBe('1.1.0')
+    expect(imported.schemaVersion).toBe('1.2.0')
     expect(imported.mode).toBe('legacy-content')
     expect(legacy?.documents).toHaveLength(1)
     expect(legacy?.documents[0].role).toBe('protocol')
     expect(legacy?.rules.recoveryOrder.length).toBeGreaterThan(0)
     expect(imported.documents.some((document) => document.role === 'protocol')).toBe(true)
+  })
+
+  it('keeps 1.0 rules in the legacy compatibility path when the old package has no protocol file', async () => {
+    const legacy = legacyV10()
+    legacy.documents = legacy.documents.filter((document) => document.role !== 'protocol')
+    const imported = await parseWorkflowJson(JSON.stringify(legacy))
+
+    expect(imported.protocolState.legacyManualOverride?.documents).toHaveLength(1)
+    expect(imported.protocolState.legacyManualOverride?.rules.recoveryOrder).toEqual(legacy.rules.recoveryOrder)
+    expect(buildProtocolProjection(imported).owner.rules).toBe('legacy-manual')
+  })
+
+  it('migrates 1.1 projects with default protocol ordering and a current regenerated bundle', async () => {
+    const imported = await parseWorkflowJson(JSON.stringify(previousV11()))
+
+    expect(imported.schemaVersion).toBe('1.2.0')
+    expect(imported.protocolState.orderingPreferences.readOrder).toHaveLength(6)
+    expect(imported.protocolState.orderingPreferences.sourcePriority).toHaveLength(7)
+    expect(buildProtocolProjection(imported).freshness).toBe('current')
+  })
+
+  it('preserves a stale 1.1 system protocol instead of silently approving it during migration', async () => {
+    const previous = previousV11()
+    previous.documents[0].description = '哈希生成后又被修改的职责。'
+    const imported = await parseWorkflowJson(JSON.stringify(previous))
+
+    expect(buildProtocolProjection(imported)).toMatchObject({ freshness: 'stale', effective: null })
   })
 
   it('requires an explicit choice when a legacy package contains multiple protocols', async () => {
@@ -95,6 +139,18 @@ describe('Workflow Studio 1.1 data semantics', () => {
     const noSystem = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
     delete noSystem.protocolState.system
     await expect(parseWorkflowJson(JSON.stringify(noSystem))).rejects.toThrow(/protocolState\.system/)
+
+    const noOrdering = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
+    delete noOrdering.protocolState.orderingPreferences
+    await expect(parseWorkflowJson(JSON.stringify(noOrdering))).rejects.toThrow(/orderingPreferences/)
+
+    const invalidOrdering = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
+    invalidOrdering.protocolState.orderingPreferences.readOrder[0].itemId = 'document:missing'
+    await expect(parseWorkflowJson(JSON.stringify(invalidOrdering))).rejects.toThrow(/完整对应当前文档/)
+
+    const duplicateOrder = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
+    duplicateOrder.protocolState.orderingPreferences.sourcePriority[1].order = 1
+    await expect(parseWorkflowJson(JSON.stringify(duplicateOrder))).rejects.toThrow(/连续递增/)
 
     const protocolInDocuments = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
     protocolInDocuments.documents.push(protocolInDocuments.protocolState.system.bundle.document)
@@ -131,6 +187,78 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(buildProtocolProjection(refreshed)).toMatchObject({ freshness: 'current' })
   })
 
+  it('keeps user protocol ordering current while allowing risky choices with warnings', () => {
+    const workflow = createCurrentStandardWorkflow()
+    useWorkflowStore.setState({ workflow, storageAvailable: false, storageMessage: 'ordering baseline' })
+
+    useWorkflowStore.getState().updateProtocolReadItem(SYSTEM_PROTOCOL_READ_ITEM_ID, { enabled: false })
+    useWorkflowStore.getState().moveProtocolSourceItem(WORKSPACE_FACT_SOURCE_KEY, -1)
+    const updated = useWorkflowStore.getState().workflow
+    if (!updated) throw new Error('missing updated workflow')
+    const projection = buildProtocolProjection(updated)
+
+    expect(projection.freshness).toBe('current')
+    expect(projection.effective?.document.required).toBe(false)
+    expect(projection.effective?.rules.recoveryOrder.some((step) => step.documentId === 'protocol-system')).toBe(false)
+    expect(projection.effective?.rules.sourcePriority[0]?.orderedSources[0]?.sourceType).toBe('workspace-fact')
+    expect(projection.effective?.rules.sourcePriority[0]?.reason).toContain('确认的顺序')
+    expect(projection.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'protocol-read-order-without-agents', severity: 'warning' }),
+      expect.objectContaining({ id: 'protocol-source-user-not-first', severity: 'warning' }),
+    ]))
+    expect(validateWorkflow(updated).filter((issue) => issue.severity === 'error')).toHaveLength(0)
+    const agents = exportHtmlDocuments(updated)['AGENTS.md']
+    const readSection = agents.match(/## 读取顺序\n\n([\s\S]*?)\n\n## 来源优先级/)?.[1] ?? ''
+    const sourceSection = agents.match(/## 来源优先级\n\n([\s\S]*?)\n\n## 更新规则/)?.[1] ?? ''
+    expect(readSection).not.toContain('AGENTS.md')
+    expect(sourceSection.indexOf('新鲜工作区事实')).toBeLessThan(sourceSection.indexOf('最新明确用户指令'))
+    expect(JSON.parse(serializeWorkflowJson(updated)).protocolState.orderingPreferences.readOrder[0]).toMatchObject({ itemId: SYSTEM_PROTOCOL_READ_ITEM_ID, enabled: false })
+  })
+
+  it('blocks export only when an editable protocol order is empty', async () => {
+    const persisted = toPersistedWorkflow(createCurrentStandardWorkflow())
+    persisted.protocolState.orderingPreferences.readOrder.forEach((item) => { item.enabled = false })
+    persisted.protocolState.orderingPreferences.sourcePriority.forEach((item) => { item.enabled = false })
+    const workflow = withRegeneratedSystemProtocol(normalizeWorkflowForRuntime(persisted))
+    const projection = buildProtocolProjection(workflow)
+
+    expect(projection.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'protocol-read-order-empty', severity: 'error' }),
+      expect.objectContaining({ id: 'protocol-source-priority-empty', severity: 'error' }),
+    ]))
+    await expect(createWorkflowZip(workflow)).rejects.toThrow(/读取顺序不能为空|来源优先级不能为空/)
+  })
+
+  it('appends new custom documents to both ordering lists and removes deleted references', () => {
+    const workflow = createCurrentStandardWorkflow()
+    useWorkflowStore.setState({ workflow, storageAvailable: false, storageMessage: 'document ordering baseline' })
+
+    useWorkflowStore.getState().addContentDocument()
+    const added = useWorkflowStore.getState().workflow
+    const custom = added?.documents.find((document) => document.role === 'custom')
+    if (!added || !custom) throw new Error('missing custom document')
+    expect(added.protocolState.orderingPreferences.readOrder.some((item) => item.itemId === `document:${custom.id}`)).toBe(true)
+    expect(added.protocolState.orderingPreferences.sourcePriority.some((item) => item.sourceKey === `document:${custom.id}`)).toBe(true)
+
+    useWorkflowStore.getState().removeDocument(custom.id)
+    const removed = useWorkflowStore.getState().workflow
+    expect(removed?.protocolState.orderingPreferences.readOrder.some((item) => item.itemId === `document:${custom.id}`)).toBe(false)
+    expect(removed?.protocolState.orderingPreferences.sourcePriority.some((item) => item.sourceKey === `document:${custom.id}`)).toBe(false)
+  })
+
+  it('includes custom content documents as generic conflict sources', () => {
+    const persisted = toPersistedWorkflow(createCurrentStandardWorkflow())
+    const document = persisted.documents.find((candidate) => candidate.id === 'spec')
+    if (!document) throw new Error('missing document fixture')
+    document.role = 'custom'
+    const workflow = withRegeneratedSystemProtocol(normalizeWorkflowForRuntime(persisted))
+    const sources = buildProtocolProjection(workflow).effective?.rules.sourcePriority[0]?.orderedSources
+
+    expect(sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceType: 'document-reference', documentId: document.id }),
+    ]))
+  })
+
   it('keeps source priority normalization runtime-only during JSON serialization', async () => {
     const raw = JSON.parse(serializeWorkflowJson(createCurrentStandardWorkflow()))
     raw.protocolState.system.bundle.rules.sourcePriority[0].orderedSources[0].priority = 77
@@ -154,7 +282,7 @@ describe('Workflow Studio 1.1 data semantics', () => {
     const markdown = exportMarkdownDocuments(workflow)
     const zip = await createWorkflowZip(workflow)
 
-    expect(html['STATUS.html']).toContain('data-empty="true"')
+    expect(html['STATUS.html']).toContain('data-empty-skeleton="true"')
     expect(html['STATUS.html']).not.toContain('未填写')
     expect(markdown['STATUS.md']).toContain('<!-- workflow-value: empty -->')
     expect(JSON.parse(zip.files['workflow.json']).rules).toBeUndefined()
@@ -184,6 +312,7 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(markdownAgents).toContain('STATUS.md')
     expect(htmlAgents).not.toMatch(/文件名：|职责：`|说明：|### /)
     expect(htmlAgents).not.toContain('由已确认文档生成的工作入口协议')
+    expect(htmlAgents).toContain('data-edit-scope="children-only"')
     expect(zip.files['documents/AGENTS.md']).toBe(htmlAgents)
   })
 
@@ -227,6 +356,36 @@ describe('Workflow Studio 1.1 data semantics', () => {
     expect(markdown).toContain('1. 先读取资料')
   })
 
+  it('exports empty HTML fields with format-locked value slots and distinct visual skeletons', () => {
+    const workflow = createCurrentStandardWorkflow()
+    const status = workflow.documents.find((document) => document.role === 'status')
+    if (!status) throw new Error('missing status fixture')
+    const fields = status.sections.flatMap((section) => section.fields).slice(0, 3)
+    const formats = ['paragraph', 'bullet-list', 'steps'] as const
+    fields.forEach((field, index) => {
+      field.displayFormat = formats[index]
+      field.value = { kind: 'empty' }
+    })
+
+    const html = exportHtmlDocuments(workflow)['STATUS.html']
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const expectedTags = ['DIV', 'UL', 'OL']
+    const expectedChildren = ['p', 'li', 'li']
+    fields.forEach((field, index) => {
+      const shell = parsed.querySelector(`[data-field="${field.id}"] > .value-shell`)
+      const value = shell?.querySelector(':scope > [data-value="true"]')
+      expect(shell?.getAttribute('data-display-format')).toBe(formats[index])
+      expect(shell?.getAttribute('data-format-lock')).toBe('true')
+      expect(value?.tagName).toBe(expectedTags[index])
+      expect(value?.getAttribute('data-edit-scope')).toBe('children-only')
+      expect(value?.getAttribute('data-allowed-child')).toBe(expectedChildren[index])
+      expect(value?.innerHTML).toContain('workflow-value:start')
+      expect(value?.innerHTML).toContain('workflow-value:end')
+      expect(shell?.querySelector(':scope > [data-empty-skeleton="true"]')).not.toBeNull()
+    })
+    expect(html).toContain('.value:not(:empty)+.value-skeleton{display:none}')
+  })
+
   it('treats an empty next-step field as a template slot during recovery rehearsal', () => {
     const workflow = createCurrentStandardWorkflow()
     const result = simulateRecovery(workflow, 'new-session')
@@ -252,7 +411,7 @@ describe('Workflow Studio 1.1 data semantics', () => {
     const current = createCurrentStandardWorkflow()
     useWorkflowStore.setState({ workflow: current, storageAvailable: false, storageMessage: 'test baseline' })
 
-    await useWorkflowStore.getState().importProject(new File(['{"schemaVersion":"1.1.0"}'], 'broken.json', { type: 'application/json' }))
+    await useWorkflowStore.getState().importProject(new File(['{"schemaVersion":"1.2.0"}'], 'broken.json', { type: 'application/json' }))
 
     expect(useWorkflowStore.getState().workflow?.workflowId).toBe(current.workflowId)
     expect(useWorkflowStore.getState().storageMessage).toMatch(/导入失败/)

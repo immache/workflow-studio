@@ -11,17 +11,21 @@ import {
 } from '../data/modules/standard-workflow-modules'
 import { parseImportedWorkflow } from '../domain/import-export'
 import {
+  createDefaultProtocolOrderingPreferences,
   remapWorkflowRootIdentity,
   normalizeWorkflowForRuntime,
   toPersistedWorkflow,
   withRegeneratedSystemProtocol,
 } from '../domain/protocol-state'
 import {
+  contentDocuments,
   createField,
   emptyValue,
   type ContentDocument,
   type DisplayFormatId,
   type ProtocolSupplement,
+  type ProtocolReadOrderPreference,
+  type ProtocolSourcePriorityPreference,
   type WorkflowField,
   type WorkflowSchema,
   type WorkflowSection,
@@ -70,6 +74,11 @@ type WorkflowStore = {
   moveField: (documentId: string, sectionId: string, fieldId: string, direction: -1 | 1) => void
   removeField: (documentId: string, sectionId: string, fieldId: string) => void
   regenerateProtocol: () => void
+  moveProtocolReadItem: (itemId: string, direction: -1 | 1) => void
+  updateProtocolReadItem: (itemId: string, patch: Partial<Pick<ProtocolReadOrderPreference, 'enabled' | 'required'>>) => void
+  moveProtocolSourceItem: (sourceKey: string, direction: -1 | 1) => void
+  updateProtocolSourceItem: (sourceKey: string, patch: Partial<Pick<ProtocolSourcePriorityPreference, 'enabled'>>) => void
+  resetProtocolOrdering: () => void
   addProtocolSupplement: (input: Omit<ProtocolSupplement, 'id'>) => void
   removeProtocolSupplement: (id: string) => void
   selectLegacyProtocol: (documentId: string) => void
@@ -158,6 +167,21 @@ function mutate(workflow: WorkflowSchema, recipe: (draft: ReturnType<typeof toPe
   return normalizeWorkflowForRuntime(draft)
 }
 
+function moveEnabledOrderingItem<T extends { enabled: boolean; order: number }>(
+  items: T[],
+  key: string,
+  direction: -1 | 1,
+  keyOf: (item: T) => string,
+): void {
+  const active = [...items].filter((item) => item.enabled).sort((left, right) => left.order - right.order)
+  const index = active.findIndex((item) => keyOf(item) === key)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= active.length) return
+  const currentOrder = active[index].order
+  active[index].order = active[target].order
+  active[target].order = currentOrder
+}
+
 export const useWorkflowStore = create<WorkflowStore>((set, get) => {
   const setWorkflow = (workflow: WorkflowSchema | null, message?: string) => set({
     workflow,
@@ -187,6 +211,15 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
     const current = get().workflow
     if (!isEditable(current)) return
     setWorkflow(mutate(current, recipe))
+    void persist()
+  }
+  const updateProtocolOrdering = (recipe: (draft: ReturnType<typeof toPersistedWorkflow>) => void) => {
+    const current = get().workflow
+    if (!isEditable(current) || current.protocolState.legacyManualOverride) return
+    const draft = structuredClone(toPersistedWorkflow(current))
+    recipe(draft)
+    draft.updatedAt = new Date().toISOString()
+    setWorkflow(withRegeneratedSystemProtocol(normalizeWorkflowForRuntime(draft)))
     void persist()
   }
 
@@ -395,6 +428,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       setWorkflow(withRegeneratedSystemProtocol(current))
       void persist()
     },
+    moveProtocolReadItem: (itemId, direction) => updateProtocolOrdering((draft) => {
+      moveEnabledOrderingItem(draft.protocolState.orderingPreferences.readOrder, itemId, direction, (item) => item.itemId)
+    }),
+    updateProtocolReadItem: (itemId, patch) => updateProtocolOrdering((draft) => {
+      const item = draft.protocolState.orderingPreferences.readOrder.find((candidate) => candidate.itemId === itemId)
+      if (item) Object.assign(item, patch)
+    }),
+    moveProtocolSourceItem: (sourceKey, direction) => updateProtocolOrdering((draft) => {
+      moveEnabledOrderingItem(draft.protocolState.orderingPreferences.sourcePriority, sourceKey, direction, (item) => item.sourceKey)
+    }),
+    updateProtocolSourceItem: (sourceKey, patch) => updateProtocolOrdering((draft) => {
+      const item = draft.protocolState.orderingPreferences.sourcePriority.find((candidate) => candidate.sourceKey === sourceKey)
+      if (item) Object.assign(item, patch)
+    }),
+    resetProtocolOrdering: () => updateProtocolOrdering((draft) => {
+      draft.protocolState.orderingPreferences = createDefaultProtocolOrderingPreferences(contentDocuments(draft))
+    }),
     addProtocolSupplement: (input) => update((draft) => {
       draft.protocolState.supplements.push({ ...input, id: newId('supplement') })
     }),

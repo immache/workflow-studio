@@ -1,4 +1,5 @@
-export const SCHEMA_VERSION = '1.1.0'
+export const SCHEMA_VERSION = '1.2.0'
+export const PREVIOUS_SCHEMA_VERSION = '1.1.0'
 export const LEGACY_SCHEMA_VERSION = '1.0.0'
 
 export type MaintenanceFormat = 'html' | 'markdown'
@@ -152,6 +153,7 @@ export type SourceRef = {
     | 'memory-history'
     | 'context-reference'
     | 'older-history'
+    | 'document-reference'
   label: string
   documentId?: string
   priority: number
@@ -231,6 +233,24 @@ export type ProtocolSupplement = {
   displayFormat: Extract<DisplayFormatId, 'paragraph' | 'bullet-list' | 'steps'>
 }
 
+export type ProtocolReadOrderPreference = {
+  itemId: string
+  enabled: boolean
+  required: boolean
+  order: number
+}
+
+export type ProtocolSourcePriorityPreference = {
+  sourceKey: string
+  enabled: boolean
+  order: number
+}
+
+export type ProtocolOrderingPreferences = {
+  readOrder: ProtocolReadOrderPreference[]
+  sourcePriority: ProtocolSourcePriorityPreference[]
+}
+
 export type LegacyProtocolOverride = {
   documents: ProtocolDocument[]
   rules: WorkflowRules
@@ -239,6 +259,7 @@ export type LegacyProtocolOverride = {
 
 export type ProtocolState = {
   system: ProtocolSystemState
+  orderingPreferences: ProtocolOrderingPreferences
   supplements: ProtocolSupplement[]
   legacyManualOverride?: LegacyProtocolOverride
 }
@@ -317,7 +338,7 @@ export type WorkflowSchema = {
   protocolState: ProtocolState
   /**
    * Runtime compatibility view. It is derived from protocolState and never
-   * written into a 1.1 workflow.json.
+   * written into a current-version workflow.json.
    */
   rules: WorkflowRules
   protocolProjection?: ProtocolProjection
@@ -483,6 +504,7 @@ export function contentDocuments(workflow: Pick<WorkflowSchema, 'documents'>): C
 export function emptyProtocolState(): ProtocolState {
   return {
     system: { status: 'empty', generatorVersion: '1' },
+    orderingPreferences: { readOrder: [], sourcePriority: [] },
     supplements: [],
   }
 }
