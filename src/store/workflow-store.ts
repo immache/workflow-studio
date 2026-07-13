@@ -32,7 +32,6 @@ import {
 } from '../domain/schema'
 import {
   assertStorageAvailable,
-  deleteWorkflowProject,
   listWorkflowProjects,
   loadActiveWorkflowProjectId,
   loadWorkflowProject,
@@ -40,6 +39,8 @@ import {
   saveWorkflowProject,
   type WorkflowProjectMeta,
 } from '../storage/indexeddb'
+import { deleteWorkflowAndReviewData } from '../storage/agent-review-storage'
+import { agentReviewCoordinator } from './agent-review-store'
 
 export type SaveStatus = 'loading' | 'saving' | 'saved' | 'failed' | 'memory'
 export type ProjectCreationInput = { name: string; description: string }
@@ -235,6 +236,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
         await assertStorageAvailable()
         const projects = await listWorkflowProjects()
         if (projects.length === 0) {
+          agentReviewCoordinator.activateWorkflow(null)
           set({ workflow: null, projects: [], saveStatus: 'saved', storageMessage: '还没有本地工作流。', storageAvailable: true })
           return
         }
@@ -243,8 +245,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
         const workflow = await loadWorkflowProject(selected.id)
         if (!workflow) throw new Error('无法读取最近项目。')
         await saveActiveWorkflowProjectId(workflow.workflowId)
+        agentReviewCoordinator.activateWorkflow(workflow.workflowId)
         set({ workflow, projects, saveStatus: 'saved', storageMessage: '已从本地浏览器恢复。', storageAvailable: true })
       } catch (error) {
+        agentReviewCoordinator.activateWorkflow(null)
         set({ workflow: null, projects: [], saveStatus: 'memory', storageAvailable: false, storageMessage: error instanceof Error ? `本地存储不可用：${error.message}` : '本地存储不可用。' })
       }
     },
@@ -253,11 +257,16 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       workflow.name = name.trim() || '当前标准工作流'
       workflow.description = description.trim() || '使用标准恢复文档设计模型协作工作流。'
       workflow = withRegeneratedSystemProtocol(workflow)
+      agentReviewCoordinator.invalidateForProjectTransition()
+      agentReviewCoordinator.activateWorkflow(workflow.workflowId)
       setWorkflow(workflow)
       await persist()
     },
     createEmptyProject: async ({ name, description }) => {
-      setWorkflow(createEmptyTemplateWorkflow(name.trim() || '未命名工作流', description.trim() || '从空白开始设计文档、章节和信息项。'))
+      const workflow = createEmptyTemplateWorkflow(name.trim() || '未命名工作流', description.trim() || '从空白开始设计文档、章节和信息项。')
+      agentReviewCoordinator.invalidateForProjectTransition()
+      agentReviewCoordinator.activateWorkflow(workflow.workflowId)
+      setWorkflow(workflow)
       await persist()
     },
     openProject: async (id) => {
@@ -265,6 +274,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       const workflow = await loadWorkflowProject(id)
       if (!workflow) return
       await saveActiveWorkflowProjectId(id)
+      agentReviewCoordinator.invalidateForProjectTransition()
+      agentReviewCoordinator.activateWorkflow(workflow.workflowId)
       set({ workflow, saveStatus: 'saved', storageMessage: '已打开本地项目。' })
     },
     duplicateCurrentProject: async () => {
@@ -274,14 +285,18 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       workflow.name = `${current.name} 副本`
       workflow.createdAt = new Date().toISOString()
       workflow = withRegeneratedSystemProtocol(workflow)
+      agentReviewCoordinator.invalidateForProjectTransition()
+      agentReviewCoordinator.activateWorkflow(workflow.workflowId)
       setWorkflow(workflow)
       await persist()
     },
     deleteProject: async (id) => {
       if (!get().storageAvailable) return
-      await deleteWorkflowProject(id)
+      if (get().workflow?.workflowId === id) agentReviewCoordinator.invalidateForProjectTransition()
+      await deleteWorkflowAndReviewData(id)
       const projects = await listWorkflowProjects()
       if (projects.length === 0) {
+        agentReviewCoordinator.activateWorkflow(null)
         set({ workflow: null, projects: [], saveStatus: 'saved', storageMessage: '项目已删除，你可以重新开始。' })
         return
       }
@@ -289,6 +304,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
       const workflow = await loadWorkflowProject(selected.id)
       if (!workflow) return
       await saveActiveWorkflowProjectId(workflow.workflowId)
+      agentReviewCoordinator.activateWorkflow(workflow.workflowId)
       set({ workflow, projects, saveStatus: 'saved', storageMessage: '项目已删除，已打开其他本地项目。' })
     },
     importProject: async (file) => {
@@ -302,6 +318,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => {
           set({ saveStatus: 'saved', storageMessage: '已取消打开高版本只读副本，当前项目未改变。' })
           return
         }
+        agentReviewCoordinator.invalidateForProjectTransition()
+        agentReviewCoordinator.activateWorkflow(workflow.workflowId)
         setWorkflow(workflow, `已导入 ${file.name}。`)
         if (!workflow.readOnlyReason) await persist()
         else set({ saveStatus: 'memory', storageMessage: workflow.readOnlyReason })

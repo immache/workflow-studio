@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
+  Bot,
   ChevronRight,
   CircleHelp,
   Download,
@@ -16,6 +17,7 @@ import {
   Package,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -35,6 +37,22 @@ import {
   WORKSPACE_FACT_SOURCE_KEY,
   buildProtocolProjection,
 } from './domain/protocol-state'
+import {
+  REVIEW_MATERIAL_WARNING_CHARACTERS,
+  buildReviewMaterial,
+  reviewLocationLabel,
+  reviewProtocolKey,
+  reviewReportIsStale,
+  reviewReportSummaryLabel,
+  reviewSnapshotFromRequest,
+  type ReviewEditTarget,
+  type ReviewFinding,
+  type ReviewMaterial,
+  type ReviewMaterialSnapshot,
+  type ReviewReport,
+  type ReviewedRequest,
+} from './domain/agent-review'
+import { validateReviewEndpoint } from './domain/agent-review-client'
 import { simulateRecovery } from './domain/simulation'
 import { validateWorkflow } from './domain/validation'
 import {
@@ -48,8 +66,9 @@ import {
   type WorkflowSchema,
 } from './domain/schema'
 import { useWorkflowStore } from './store/workflow-store'
+import { useAgentReviewStore } from './store/agent-review-store'
 
-type Route = { page: 'home' | 'learn' | 'build'; step: number }
+type Route = { page: 'home' | 'learn' | 'build' | 'review'; step: number }
 type CreationKind = 'standard' | 'blank' | null
 type PreviewFormat = 'html' | 'markdown'
 
@@ -72,9 +91,24 @@ function isBeginnerDisplayFormat(format: DisplayFormatId | undefined): format is
   return format === 'paragraph' || format === 'bullet-list' || format === 'steps'
 }
 
+function reviewEditTargetStep(target: ReviewEditTarget): number {
+  if (target.scope === 'workflow-meta') return 1
+  if (target.scope === 'protocol-read-order' || target.scope === 'protocol-source-priority') return 4
+  return 3
+}
+
+function reviewEditTargetElementId(target: ReviewEditTarget): string {
+  if (target.scope === 'workflow-meta') return `review-workflow-${target.property}`
+  if (target.scope === 'document') return `review-document-${target.documentId}-${target.property}`
+  if (target.scope === 'section') return `review-section-${target.documentId}-${target.sectionId}-${target.property}`
+  if (target.scope === 'field') return `review-field-${target.documentId}-${target.sectionId}-${target.fieldId}-${target.property}`
+  return target.scope === 'protocol-read-order' ? 'review-protocol-read-order' : 'review-protocol-source-priority'
+}
+
 function parseRoute(hash = window.location.hash): Route {
   const value = hash.replace(/^#/, '')
   if (value === 'learn') return { page: 'learn', step: 0 }
+  if (value === 'review') return { page: 'review', step: 0 }
   const build = value.match(/^build\/step-(\d)$/)
   if (build) return { page: 'build', step: Math.min(6, Math.max(1, Number(build[1]))) }
   if (value.startsWith('advanced') || ['documents', 'rules'].includes(value)) return { page: 'build', step: value.includes('documents') ? 3 : value.includes('rules') ? 4 : 1 }
@@ -85,6 +119,7 @@ function parseRoute(hash = window.location.hash): Route {
 function routeHash(route: Route): string {
   if (route.page === 'home') return '#home'
   if (route.page === 'learn') return '#learn'
+  if (route.page === 'review') return '#review'
   return `#build/step-${route.step}`
 }
 
@@ -106,6 +141,20 @@ function useRoute(): [Route, (route: Route, replace?: boolean) => void] {
 
 function contentDocuments(workflow: WorkflowSchema): WorkflowDocument[] {
   return workflow.documents.filter((document) => document.role !== 'protocol')
+}
+
+function reviewEditTargetIsAvailable(workflow: WorkflowSchema, target: ReviewEditTarget): boolean {
+  if (target.scope === 'workflow-meta') return !workflow.readOnlyReason
+  if (target.scope === 'protocol-read-order' || target.scope === 'protocol-source-priority') {
+    return !workflow.readOnlyReason && !workflow.protocolState.legacyManualOverride
+  }
+  const document = contentDocuments(workflow).find((candidate) => candidate.id === target.documentId)
+  if (!document || workflow.readOnlyReason) return false
+  if (target.scope === 'document') return true
+  const section = document.sections.find((candidate) => candidate.id === target.sectionId)
+  if (!section) return false
+  if (target.scope === 'section') return true
+  return section.fields.some((candidate) => candidate.id === target.fieldId)
 }
 
 function legacyContentCount(workflow: WorkflowSchema): number {
@@ -153,13 +202,47 @@ function App() {
   const duplicateCurrentProject = useWorkflowStore((state) => state.duplicateCurrentProject)
   const deleteProject = useWorkflowStore((state) => state.deleteProject)
   const openProject = useWorkflowStore((state) => state.openProject)
+  const hydrateAgentReview = useAgentReviewStore((state) => state.hydrateBrowserSettings)
+  const reviewInFlight = useAgentReviewStore((state) => state.inFlight)
+  const reviewReport = useAgentReviewStore((state) => state.report)
+  const reviewStatus = useAgentReviewStore((state) => state.reviewStatus)
+  const reviewTestStatus = useAgentReviewStore((state) => state.testStatus)
+  const reviewPrompt = useAgentReviewStore((state) => state.prompt)
+  const isReviewProtocolConfirmed = useAgentReviewStore((state) => state.isProtocolConfirmed)
+  const cancelReview = useAgentReviewStore((state) => state.cancelInFlight)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mainHeadingRef = useRef<HTMLHeadingElement>(null)
   const hasMountedRouteRef = useRef(false)
   const currentLegacyContentCount = workflow ? legacyContentCount(workflow) : 0
   const statusNeedsAttention = importInProgress || saveStatus === 'failed' || saveStatus === 'memory' || /失败|不可用|无法/.test(storageMessage)
+  const headerReviewFingerprint = useMemo(() => {
+    if (!workflow || !reviewReport) return null
+    const protocolKey = reviewProtocolKey(workflow)
+    const protocolStatus: 'confirmed' | 'draft' = protocolKey && isReviewProtocolConfirmed(workflow.workflowId, protocolKey) ? 'confirmed' : 'draft'
+    try {
+      return buildReviewMaterial({ workflow, userPrompt: reviewPrompt, protocolStatus }).inputFingerprint
+    } catch {
+      return null
+    }
+  }, [isReviewProtocolConfirmed, reviewPrompt, reviewReport, workflow])
+  const headerReportStale = reviewReportIsStale(reviewReport, headerReviewFingerprint)
+  const reviewHeaderLabel = reviewInFlight?.kind === 'review'
+    ? ''
+    : reviewReport
+      ? reviewStatus.kind === 'error'
+        ? headerReportStale ? '审查未完成 · 查看上次报告（基于较早版本）' : '审查未完成 · 查看上次报告'
+        : headerReportStale ? '审查完成 · 查看报告（基于较早版本）' : '审查完成 · 查看报告'
+      : reviewStatus.kind === 'error' ? '审查未完成 · 返回审查/重试' : ''
+  const reviewLiveMessage = reviewInFlight
+    ? `${reviewInFlight.kind === 'review' ? '智能体审查' : '连接测试'}：${reviewStageLabel(reviewInFlight.stage)}`
+    : reviewStatus.kind === 'success' || reviewStatus.kind === 'error' ? reviewStatus.message
+      : reviewTestStatus.kind === 'success' || reviewTestStatus.kind === 'error' ? reviewTestStatus.message
+        : ''
 
-  useEffect(() => { void initialize() }, [initialize])
+  useEffect(() => {
+    void initialize()
+    void hydrateAgentReview()
+  }, [hydrateAgentReview, initialize])
   useEffect(() => {
     if (!window.location.hash || window.location.hash.startsWith('#advanced') || ['#documents', '#rules', '#simulation', '#export'].includes(window.location.hash)) {
       window.history.replaceState(null, '', routeHash(parseRoute()))
@@ -188,8 +271,11 @@ function App() {
       <nav aria-label="主导航" className="site-nav">
         <button type="button" className={route.page === 'learn' ? 'nav-link active' : 'nav-link'} onClick={() => navigate({ page: 'learn', step: 0 })}><BookOpen size={16} aria-hidden="true" />工作流入门</button>
         <button type="button" className={route.page === 'build' ? 'nav-link active' : 'nav-link'} onClick={() => navigate({ page: 'build', step: workflow ? Math.max(2, route.step || 2) : 1 })}><FilePlus2 size={16} aria-hidden="true" />工作流搭建</button>
+        <button type="button" className={route.page === 'review' ? 'nav-link active' : 'nav-link'} onClick={() => navigate({ page: 'review', step: 0 })}><Bot size={16} aria-hidden="true" />智能体审查</button>
       </nav>
       <div className="header-actions">
+        {reviewInFlight?.kind === 'review' ? <div className="review-header-status"><span>智能体审查中</span><button type="button" className="text-action" onClick={cancelReview}>取消</button></div> : null}
+        {!reviewInFlight && reviewHeaderLabel ? <button type="button" className="review-header-result text-action" onClick={() => navigate({ page: 'review', step: 0 })}>{reviewHeaderLabel}</button> : null}
         {workflow ? <details className="project-menu"><summary>项目 <ChevronRight size={15} aria-hidden="true" /></summary><div className="project-menu-panel">
           <p className="menu-label">本地项目</p>
           {projects.map((project) => <button key={project.id} type="button" className={project.id === workflow.workflowId ? 'project-choice active' : 'project-choice'} onClick={() => void openProject(project.id)}><span>{project.name}</span><small>{project.id === workflow.workflowId && currentLegacyContentCount > 0 ? `含 ${currentLegacyContentCount} 项旧版内容` : new Date(project.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
@@ -206,7 +292,9 @@ function App() {
       {route.page === 'home' ? <HomePage headingRef={mainHeadingRef} onLearn={() => navigate({ page: 'learn', step: 0 })} onBuild={() => navigate({ page: 'build', step: 1 })} /> : null}
       {route.page === 'learn' ? <LearnPage headingRef={mainHeadingRef} onBuild={() => navigate({ page: 'build', step: 1 })} /> : null}
       {route.page === 'build' ? <BuildPage headingRef={mainHeadingRef} workflow={workflow} step={route.step} onNavigate={navigate} createStandard={createStandardProject} createBlank={createEmptyProject} openImporter={openImporter} /> : null}
+      {route.page === 'review' ? <ReviewPage headingRef={mainHeadingRef} workflow={workflow} onNavigate={navigate} /> : null}
     </main>
+    <p className="review-live-region" role="status" aria-live="polite">{reviewLiveMessage}</p>
     <div className={statusNeedsAttention ? 'status-line' : 'status-line quiet'} role={statusNeedsAttention ? 'status' : undefined} aria-live={statusNeedsAttention ? 'polite' : 'off'}>{storageMessage}</div>
   </div>
 }
@@ -259,14 +347,15 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null)
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null)
-  const [confirmedProtocolKey, setConfirmedProtocolKey] = useState<string | null>(null)
+  const [pendingReviewFocus, setPendingReviewFocus] = useState<string | null>(null)
   const saveStatus = useWorkflowStore((state) => state.saveStatus)
+  const isProtocolConfirmed = useAgentReviewStore((state) => state.isProtocolConfirmed)
+  const confirmProtocol = useAgentReviewStore((state) => state.confirmProtocol)
+  const editIntent = useAgentReviewStore((state) => state.editIntent)
+  const consumeEditIntent = useAgentReviewStore((state) => state.consumeEditIntent)
   const content = useMemo(() => workflow ? contentDocuments(workflow) : [], [workflow])
-  const protocolProjection = useMemo(() => workflow ? buildProtocolProjection(workflow) : null, [workflow])
-  const protocolKey = workflow && protocolProjection
-    ? `${workflow.workflowId}:${workflow.updatedAt}:${protocolProjection.freshness}:${workflow.protocolState.system.status === 'ready' ? workflow.protocolState.system.sourceHash : 'none'}:${JSON.stringify(workflow.protocolState.orderingPreferences)}:${JSON.stringify(workflow.protocolState.supplements)}`
-    : null
-  const protocolConfirmed = Boolean(protocolKey && protocolKey === confirmedProtocolKey)
+  const protocolKey = workflow ? reviewProtocolKey(workflow) : null
+  const protocolConfirmed = Boolean(workflow && isProtocolConfirmed(workflow.workflowId, protocolKey))
 
   useEffect(() => {
     if (!workflow && saveStatus !== 'loading' && step !== 1) onNavigate({ page: 'build', step: 1 }, true)
@@ -283,6 +372,34 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
       setActiveFieldId(content[0]?.sections[0]?.fields[0]?.id ?? null)
     }
   }, [activeDocumentId, content])
+
+  useEffect(() => {
+    if (!workflow || !editIntent || editIntent.workflowId !== workflow.workflowId) return
+    const targetStep = reviewEditTargetStep(editIntent.target)
+    if (step !== targetStep) {
+      onNavigate({ page: 'build', step: targetStep }, true)
+      return
+    }
+    if (editIntent.target.scope === 'document' || editIntent.target.scope === 'section' || editIntent.target.scope === 'field') {
+      setActiveDocumentId(editIntent.target.documentId)
+      if (editIntent.target.scope === 'section' || editIntent.target.scope === 'field') setActiveSectionId(editIntent.target.sectionId)
+      if (editIntent.target.scope === 'field') setActiveFieldId(editIntent.target.fieldId)
+    }
+    const consumed = consumeEditIntent(workflow.workflowId)
+    if (!consumed) return
+    setPendingReviewFocus(reviewEditTargetElementId(consumed.target))
+  }, [consumeEditIntent, editIntent, onNavigate, step, workflow])
+
+  useEffect(() => {
+    if (!pendingReviewFocus) return
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(pendingReviewFocus)
+      if (target instanceof HTMLElement) target.focus()
+      else headingRef.current?.focus()
+      setPendingReviewFocus(null)
+    }, 40)
+    return () => window.clearTimeout(timer)
+  }, [activeDocumentId, activeFieldId, activeSectionId, headingRef, pendingReviewFocus])
 
   const displayedStep = workflow ? step : 1
   const go = (nextStep: number) => onNavigate({ page: 'build', step: nextStep })
@@ -309,7 +426,7 @@ function BuildPage({ headingRef, workflow, step, onNavigate, createStandard, cre
     {workflow && legacyContentCount(workflow) > 0 ? <LegacyContentNotice workflow={workflow} showDetails={displayedStep >= 5} /> : null}
     {displayedStep === 1 ? <ProjectStartStep workflow={workflow} onCreateStandard={createStandard} onCreateBlank={createBlank} onNext={() => go(2)} openImporter={openImporter} /> : null}
     {displayedStep === 2 && workflow ? <DocumentSelectionStep workflow={workflow} onNext={() => go(3)} /> : null}
-    {displayedStep >= 3 && workflow ? <BuildPagePlaceholder step={displayedStep} workflow={workflow} activeDocumentId={activeDocumentId} activeSectionId={activeSectionId} activeFieldId={activeFieldId} setActiveDocumentId={setActiveDocumentId} setActiveSectionId={setActiveSectionId} setActiveFieldId={setActiveFieldId} protocolConfirmed={protocolConfirmed} onProtocolConfirmed={() => { if (protocolKey) setConfirmedProtocolKey(protocolKey) }} onNavigate={go} /> : null}
+    {displayedStep >= 3 && workflow ? <BuildPagePlaceholder step={displayedStep} workflow={workflow} activeDocumentId={activeDocumentId} activeSectionId={activeSectionId} activeFieldId={activeFieldId} setActiveDocumentId={setActiveDocumentId} setActiveSectionId={setActiveSectionId} setActiveFieldId={setActiveFieldId} protocolConfirmed={protocolConfirmed} onProtocolConfirmed={() => { if (protocolKey) confirmProtocol(workflow.workflowId, protocolKey) }} onNavigate={go} /> : null}
   </section>
 }
 
@@ -342,8 +459,8 @@ function ProjectStartStep({ workflow, onCreateStandard, onCreateBlank, onNext, o
       <h2 id="project-summary-title">这套工作流要解决什么？</h2>
       <p className="step-intro">名称和说明会出现在导出包的说明中。它们描述模板用途，不是当前项目进度。</p>
       <div className="form-grid">
-        <label>工作流名称<input value={workflow.name} onChange={(event) => updateWorkflowMeta({ name: event.target.value, description: workflow.description })} /></label>
-        <label className="wide">一句话说明<textarea rows={3} value={workflow.description} onChange={(event) => updateWorkflowMeta({ name: workflow.name, description: event.target.value })} /></label>
+        <label>工作流名称<input id="review-workflow-name" value={workflow.name} onChange={(event) => updateWorkflowMeta({ name: event.target.value, description: workflow.description })} /></label>
+        <label className="wide">一句话说明<textarea id="review-workflow-description" rows={3} value={workflow.description} onChange={(event) => updateWorkflowMeta({ name: workflow.name, description: event.target.value })} /></label>
       </div>
       <div className="step-actions"><button type="button" className="button primary" onClick={onNext}>继续选择资料 <ChevronRight size={17} aria-hidden="true" /></button></div>
     </section>
@@ -542,9 +659,9 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
     <section className="document-details" aria-labelledby="document-details-title">
       <div className="document-details-heading"><div><p className="micro-label">正在设计的资料</p><h3 id="document-details-title">{activeDocument.filename}</h3><p>{activeDocument.description}</p></div><FileText size={28} aria-hidden="true" /></div>
       <div className="form-grid document-form">
-        <label>资料标题（页面上看到的名字）<input value={activeDocument.title} onChange={(event) => updateDocument(activeDocument.id, { title: event.target.value, description: activeDocument.description, filename: activeDocument.filename })} /></label>
-        <label>导出文件名（保存到文件夹中的名字）<input value={activeDocument.filename} onChange={(event) => updateDocument(activeDocument.id, { title: activeDocument.title, description: activeDocument.description, filename: event.target.value })} /></label>
-        <label className="wide">这份资料只负责什么<textarea rows={3} value={activeDocument.description} onChange={(event) => updateDocument(activeDocument.id, { title: activeDocument.title, description: event.target.value, filename: activeDocument.filename })} /></label>
+        <label>资料标题（页面上看到的名字）<input id={`review-document-${activeDocument.id}-title`} value={activeDocument.title} onChange={(event) => updateDocument(activeDocument.id, { title: event.target.value, description: activeDocument.description, filename: activeDocument.filename })} /></label>
+        <label>导出文件名（保存到文件夹中的名字）<input id={`review-document-${activeDocument.id}-filename`} value={activeDocument.filename} onChange={(event) => updateDocument(activeDocument.id, { title: activeDocument.title, description: activeDocument.description, filename: event.target.value })} /></label>
+        <label className="wide">这份资料只负责什么<textarea id={`review-document-${activeDocument.id}-description`} rows={3} value={activeDocument.description} onChange={(event) => updateDocument(activeDocument.id, { title: activeDocument.title, description: event.target.value, filename: activeDocument.filename })} /></label>
       </div>
     </section>
 
@@ -562,8 +679,8 @@ function DocumentCanvasStep({ workflow, activeDocumentId, activeSectionId, activ
       {activeSection ? <section className="section-workspace" aria-labelledby="section-title">
         <div className="section-heading-block"><p className="micro-label">正在设计的章节</p><h3 id="section-title">{activeSection.title}</h3><p>先写清这一章要收集什么，再添加信息项。</p></div>
         <div className="form-grid section-form">
-          <label>章节名称<input value={activeSection.title} onChange={(event) => updateSection(activeDocument.id, activeSection.id, { title: event.target.value, purpose: activeSection.purpose })} /></label>
-          <label className="wide">这一章负责什么<textarea rows={2} value={activeSection.purpose} onChange={(event) => updateSection(activeDocument.id, activeSection.id, { title: activeSection.title, purpose: event.target.value })} /></label>
+          <label>章节名称<input id={`review-section-${activeDocument.id}-${activeSection.id}-title`} value={activeSection.title} onChange={(event) => updateSection(activeDocument.id, activeSection.id, { title: event.target.value, purpose: activeSection.purpose })} /></label>
+          <label className="wide">这一章负责什么<textarea id={`review-section-${activeDocument.id}-${activeSection.id}-purpose`} rows={2} value={activeSection.purpose} onChange={(event) => updateSection(activeDocument.id, activeSection.id, { title: activeSection.title, purpose: event.target.value })} /></label>
         </div>
         <div className="information-list" aria-label="章节中的信息项">
           <div className="information-list-heading"><div><p className="micro-label">信息项</p><h4>告诉未来模型要记录什么</h4></div><button type="button" className="button secondary" onClick={addManualField}><Plus size={17} aria-hidden="true" />新增信息项</button></div>
@@ -593,10 +710,10 @@ function FieldDesignCard({ document, section, field, nameInputRef, onChange }: {
   return <section className="field-design-card" aria-labelledby="field-design-title">
     <div className="field-design-heading"><div><p className="micro-label">正在编辑的信息项</p><h4 id="field-design-title">{field.label}</h4><p>模板阶段不填写项目事实。现在只定义未来模型应当怎么记录这项信息。</p></div><span className="field-location">{document.filename} / {section.title}</span></div>
     <div className="form-grid field-form">
-      <label>信息项名称<input ref={nameInputRef} value={field.label} onChange={(event) => onChange({ label: event.target.value, guidance: field.guidance })} /></label>
-      <label className="wide">常驻填写说明<textarea rows={3} value={field.guidance} onChange={(event) => onChange({ label: field.label, guidance: event.target.value })} /></label>
+      <label>信息项名称<input id={`review-field-${document.id}-${section.id}-${field.id}-label`} ref={nameInputRef} value={field.label} onChange={(event) => onChange({ label: event.target.value, guidance: field.guidance })} /></label>
+      <label className="wide">常驻填写说明<textarea id={`review-field-${document.id}-${section.id}-${field.id}-guidance`} rows={3} value={field.guidance} onChange={(event) => onChange({ label: field.label, guidance: event.target.value })} /></label>
     </div>
-    <div className="format-area"><div><p className="micro-label">导出后怎么呈现</p><h4>选一种最容易读懂的排版</h4><p>下面的内容只是实时示例，不会写入你的模板。</p></div>{legacyFormat ? <div className="legacy-format-note" role="status"><strong>旧版排版：{displayFormatLabels[legacyFormat]}</strong><p>这是导入包原有的呈现方式，目前会保持原样。只有主动选择下面的新排版，才会替换它。</p></div> : null}<div className="format-options" role="radiogroup" aria-label="导出后的呈现方式">
+    <div className="format-area" id={`review-field-${document.id}-${section.id}-${field.id}-display-format`} tabIndex={-1}><div><p className="micro-label">导出后怎么呈现</p><h4>选一种最容易读懂的排版</h4><p>下面的内容只是实时示例，不会写入你的模板。</p></div>{legacyFormat ? <div className="legacy-format-note" role="status"><strong>旧版排版：{displayFormatLabels[legacyFormat]}</strong><p>这是导入包原有的呈现方式，目前会保持原样。只有主动选择下面的新排版，才会替换它。</p></div> : null}<div className="format-options" role="radiogroup" aria-label="导出后的呈现方式">
       {formatCards.map((format) => <label className={selectedFormat === format.id ? 'format-option selected' : 'format-option'} key={format.id}>
         <input type="radio" name={`format-${field.id}`} checked={selectedFormat === format.id} onChange={() => onChange({ label: field.label, guidance: field.guidance, displayFormat: format.id })} />
         <span><strong>{format.title}</strong><small>{format.description}</small><FormatSample format={format.id} /></span>
@@ -719,7 +836,7 @@ function ProtocolReadOrderEditor({ items, documents, onMove, onUpdate }: {
     return { label: document?.filename ?? itemId, description: document?.description ?? '当前工作流中的资料。' }
   }
 
-  return <section className="protocol-ordering-editor" aria-labelledby="read-order-editor-title">
+  return <section className="protocol-ordering-editor" id="review-protocol-read-order" tabIndex={-1} aria-labelledby="read-order-editor-title">
     <header><span className="ordering-editor-number">01</span><div><h4 id="read-order-editor-title">开始时按什么顺序读</h4><p>“必读”会在开始工作时读取；“按需”只在用到相关信息时读取。</p></div></header>
     {activeItems.length > 0 ? <ol className="protocol-ordering-list">
       {activeItems.map((item, index) => {
@@ -756,7 +873,7 @@ function ProtocolSourceOrderEditor({ items, documents, onMove, onUpdate }: {
     return { label: document?.filename ?? sourceKey, description: document?.description ?? '当前工作流中的资料。' }
   }
 
-  return <section className="protocol-ordering-editor" aria-labelledby="source-order-editor-title">
+  return <section className="protocol-ordering-editor" id="review-protocol-source-priority" tabIndex={-1} aria-labelledby="source-order-editor-title">
     <header><span className="ordering-editor-number">02</span><div><h4 id="source-order-editor-title">冲突时先相信什么</h4><p>同一件事说法不同时，排在前面的来源先用于判断。</p></div></header>
     {activeItems.length > 0 ? <ol className="protocol-ordering-list">
       {activeItems.map((item, index) => {
@@ -907,4 +1024,253 @@ function RehearseExportStep({ workflow, protocolConfirmed, onReviewProtocol }: {
     {validationErrors.length > 0 ? <div className="validation-hint"><AlertCircle size={18} aria-hidden="true" /><div><strong>导出前还需要处理 {validationErrors.length} 个问题</strong><p>{validationErrors[0].message}</p></div></div> : null}
     {message ? <p className="export-message" role="status">{message}</p> : null}
   </section>
+}
+
+function reviewStageLabel(stage: 'connecting' | 'sending' | 'waiting' | 'validating'): string {
+  if (stage === 'connecting') return '正在连接…'
+  if (stage === 'sending') return '正在发送…'
+  if (stage === 'waiting') return '正在等待审查意见…'
+  return '正在检查报告格式…'
+}
+
+function ReviewPage({ headingRef, workflow, onNavigate }: {
+  headingRef: React.RefObject<HTMLHeadingElement | null>
+  workflow: WorkflowSchema | null
+  onNavigate: (route: Route, replace?: boolean) => void
+}) {
+  const connection = useAgentReviewStore((state) => state.connection)
+  const endpointUrl = useAgentReviewStore((state) => state.endpointUrl)
+  const apiKey = useAgentReviewStore((state) => state.apiKey)
+  const prompt = useAgentReviewStore((state) => state.prompt)
+  const report = useAgentReviewStore((state) => state.report)
+  const inFlight = useAgentReviewStore((state) => state.inFlight)
+  const testStatus = useAgentReviewStore((state) => state.testStatus)
+  const reviewStatus = useAgentReviewStore((state) => state.reviewStatus)
+  const isProtocolConfirmed = useAgentReviewStore((state) => state.isProtocolConfirmed)
+  const updateConnection = useAgentReviewStore((state) => state.updateConnection)
+  const setEndpointUrl = useAgentReviewStore((state) => state.setEndpointUrl)
+  const setApiKey = useAgentReviewStore((state) => state.setApiKey)
+  const clearApiKey = useAgentReviewStore((state) => state.clearApiKey)
+  const setPrompt = useAgentReviewStore((state) => state.setPrompt)
+  const resetPrompt = useAgentReviewStore((state) => state.resetPrompt)
+  const startConnectionTest = useAgentReviewStore((state) => state.startConnectionTest)
+  const startReview = useAgentReviewStore((state) => state.startReview)
+  const cancelInFlight = useAgentReviewStore((state) => state.cancelInFlight)
+  const setEditIntent = useAgentReviewStore((state) => state.setEditIntent)
+  const [settingsOpen, setSettingsOpen] = useState(true)
+  const [promptOpen, setPromptOpen] = useState(true)
+  const [showKey, setShowKey] = useState(false)
+  const [allowInsecure, setAllowInsecure] = useState(false)
+
+  const protocolKey = workflow ? reviewProtocolKey(workflow) : null
+  const protocolStatus: 'confirmed' | 'draft' = workflow && protocolKey && isProtocolConfirmed(workflow.workflowId, protocolKey) ? 'confirmed' : 'draft'
+  const validationErrors = useMemo(() => workflow ? validateWorkflow(workflow).filter((issue) => issue.severity === 'error') : [], [workflow])
+  const materialState = useMemo(() => {
+    if (!workflow) return { material: undefined as ReviewMaterial | undefined, error: '先创建或打开一套工作流，才能准备审查材料。' }
+    try {
+      return { material: buildReviewMaterial({ workflow, userPrompt: prompt, protocolStatus }), error: undefined }
+    } catch (error) {
+      return { material: undefined as ReviewMaterial | undefined, error: error instanceof Error ? error.message : '当前工作流还不能发起审查。' }
+    }
+  }, [prompt, protocolStatus, workflow])
+  const endpoint = validateReviewEndpoint(endpointUrl)
+  const isHttpEndpoint = endpoint.ok && endpoint.endpoint.protocol === 'http:'
+  const connectionComplete = endpoint.ok && Boolean(connection.model.trim()) && Boolean(apiKey)
+  const transportAllowed = !isHttpEndpoint || allowInsecure
+  const reviewReady = Boolean(workflow && materialState.material && validationErrors.length === 0 && connectionComplete && transportAllowed && !inFlight)
+  const reviewInputsLocked = Boolean(inFlight)
+  const reportSnapshot = useMemo(() => report ? reviewSnapshotFromRequest(report.reviewedRequest) : undefined, [report])
+  const reportStale = reviewReportIsStale(report, materialState.material?.inputFingerprint ?? null)
+  const reviewInProgress = inFlight?.kind === 'review'
+  const testInProgress = inFlight?.kind === 'test'
+
+  useEffect(() => {
+    setAllowInsecure(false)
+  }, [endpointUrl])
+
+  const currentFingerprint = () => {
+    const currentWorkflow = useWorkflowStore.getState().workflow
+    if (!currentWorkflow || currentWorkflow.workflowId !== workflow?.workflowId) return null
+    const reviewState = useAgentReviewStore.getState()
+    const key = reviewProtocolKey(currentWorkflow)
+    const currentProtocolStatus: 'confirmed' | 'draft' = key && reviewState.isProtocolConfirmed(currentWorkflow.workflowId, key) ? 'confirmed' : 'draft'
+    try {
+      return buildReviewMaterial({ workflow: currentWorkflow, userPrompt: reviewState.prompt, protocolStatus: currentProtocolStatus }).inputFingerprint
+    } catch {
+      return null
+    }
+  }
+
+  const goToBuild = (step = 1) => onNavigate({ page: 'build', step })
+  const goToEdit = (target: ReviewEditTarget) => {
+    if (!workflow || !reviewEditTargetIsAvailable(workflow, target)) return
+    setEditIntent(workflow.workflowId, target)
+    onNavigate({ page: 'build', step: reviewEditTargetStep(target) })
+  }
+  const startFullReview = () => {
+    if (!workflow || !reviewReady) return
+    void startReview({ workflow, allowInsecure, currentFingerprint })
+  }
+
+  const blockers: Array<{ title: string; detail: string; action?: { label: string; step: number } }> = []
+  if (!workflow) {
+    blockers.push({ title: '还没有工作流', detail: '先创建或打开一套工作流，才能审查它的长期协作能力。', action: { label: '去搭建工作流', step: 1 } })
+  } else {
+    if (materialState.error) {
+      const action = materialState.error.includes('至少需要一份内容文档')
+        ? { label: '去选择资料', step: 2 }
+        : materialState.error.includes('保留旧运行内容') || materialState.error.includes('只读兼容')
+          ? { label: '去处理兼容内容', step: 6 }
+          : { label: '去审查入口协议', step: 4 }
+      blockers.push({ title: '工作流还没有准备好', detail: materialState.error, action })
+    }
+    if (validationErrors.length > 0) {
+      const firstIssue = validationErrors[0]
+      const protocolRule = /^(recovery|protocol|maintenance-valid|completion-valid|export-)/.test(firstIssue.ruleId)
+      blockers.push({ title: `还有 ${validationErrors.length} 个结构问题`, detail: firstIssue.message, action: protocolRule ? { label: '去审查入口协议', step: 4 } : { label: '去搭建资料', step: 3 } })
+    }
+  }
+  if (!endpoint.ok && endpointUrl.trim()) blockers.push({ title: '请求地址还不能使用', detail: '请填写完整的 HTTP 或 HTTPS 请求地址；地址不能包含用户名、密码或 # 片段。' })
+  if (!connection.model.trim()) blockers.push({ title: '还没有填写模型名', detail: '输入服务商要求的模型名称后，才能开始审查。' })
+  if (!apiKey) blockers.push({ title: '还没有填写 API Key', detail: 'Key 只保留在当前浏览器标签页；刷新或关闭后会自动清除。' })
+  if (isHttpEndpoint && !allowInsecure) blockers.push({ title: '需要确认 HTTP 风险', detail: '认证 Key 和审查材料会以未加密方式直接发送到该地址。' })
+
+  return <article className="review-page" aria-labelledby="review-title">
+    <header className="review-heading">
+      <p className="eyebrow">Independent workflow review</p>
+      <h1 id="review-title" ref={headingRef} tabIndex={-1}>让另一位审查员检查工作流能否<span className="underline-emphasis">长期不偏移。</span></h1>
+      <p>它只给建议，不会改写你的资料。审查重点是：模型能否持续知道该读什么、信什么、接着做什么，同时不过度增加维护成本。</p>
+    </header>
+
+    <section className="review-section review-connection" aria-labelledby="review-connection-title">
+      <details open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
+        <summary><span><span className="micro-label">01 · 审查连接</span><strong id="review-connection-title">连接到你的兼容服务</strong><small>{connection.name || '尚未命名'} · {connection.model || '尚未填写模型名'}</small></span><span className="details-hint">{settingsOpen ? '收起' : '编辑'}</span></summary>
+        <div className="review-details-body">
+          <p className="review-intro">填写服务商提供的完整 Chat Completions 请求地址和模型名，不要只填服务根地址。程序不会替你补路径，也不会保存完整地址或 API Key。</p>
+          <div className="review-form-grid">
+            <label>连接名称（只保存在本机）<input disabled={reviewInputsLocked} value={connection.name} placeholder="例如：我的审查服务" onChange={(event) => updateConnection({ name: event.target.value })} /></label>
+            <label>模型名（只保存在本机）<input disabled={reviewInputsLocked} value={connection.model} placeholder="例如：deepseek-chat" onChange={(event) => updateConnection({ model: event.target.value })} /></label>
+            <label className="wide">最终请求地址（仅当前会话）<input disabled={reviewInputsLocked} inputMode="url" autoComplete="off" spellCheck={false} value={endpointUrl} placeholder="https://example.com/v1/chat/completions" onChange={(event) => setEndpointUrl(event.target.value)} aria-invalid={Boolean(endpointUrl.trim() && !endpoint.ok)} /></label>
+            <label className="wide">API Key（仅当前会话）<span className="key-input-row"><input disabled={reviewInputsLocked} type={showKey ? 'text' : 'password'} autoComplete="off" value={apiKey} placeholder="粘贴后只用于本次浏览器会话" onChange={(event) => setApiKey(event.target.value)} /><button disabled={reviewInputsLocked} type="button" className="text-action" onClick={() => setShowKey((visible) => !visible)}>{showKey ? '隐藏' : '显示'}</button>{apiKey ? <button disabled={reviewInputsLocked} type="button" className="text-action" onClick={clearApiKey}>清除</button> : null}</span></label>
+          </div>
+          {endpointUrl.trim() && !endpoint.ok ? <p className="form-error" role="alert"><AlertCircle size={16} aria-hidden="true" />请求地址不可用。</p> : null}
+          {isHttpEndpoint ? <label className="insecure-confirmation"><input disabled={reviewInputsLocked} type="checkbox" checked={allowInsecure} onChange={(event) => setAllowInsecure(event.target.checked)} /><span>我了解：HTTP 不会加密传输，API Key 和审查材料会直接发送到这个地址。</span></label> : null}
+          <div className="review-inline-actions"><button type="button" className="button secondary" disabled={!connectionComplete || Boolean(inFlight) || (isHttpEndpoint && !allowInsecure)} onClick={() => void startConnectionTest({ allowInsecure })}>{testInProgress ? reviewStageLabel(inFlight.stage) : '测试连接'}</button>{(testStatus.kind === 'success' || testStatus.kind === 'error') && !testInProgress ? <p className={testStatus.kind === 'success' ? 'review-status success' : 'review-status error'}>{testStatus.message}</p> : null}</div>
+        </div>
+      </details>
+    </section>
+
+    {workflow ? <section className="review-section review-prompt" aria-labelledby="review-prompt-title">
+      <details open={promptOpen} onToggle={(event) => setPromptOpen(event.currentTarget.open)}>
+        <summary><span><span className="micro-label">02 · 审查重点</span><strong id="review-prompt-title">告诉审查员你特别在意什么</strong><small>默认提示词会关注长期稳定与维护效率。</small></span><span className="details-hint">{promptOpen ? '收起' : '编辑'}</span></summary>
+        <div className="review-details-body">
+          <p className="review-intro">默认提示词已经覆盖核心问题。只有在你有额外关注点时再改；它不会改变固定报告格式或让程序自动修改资料。</p>
+          <label className="review-textarea-label">给审查员的补充说明<textarea disabled={reviewInputsLocked} rows={7} value={prompt} onChange={(event) => setPrompt(workflow.workflowId, event.target.value)} /></label>
+          <div className="review-inline-actions"><button disabled={reviewInputsLocked} type="button" className="button text" onClick={() => resetPrompt(workflow.workflowId)}>恢复默认</button><span className="review-meta">这份说明只保存在当前工作流的本机数据中。</span></div>
+        </div>
+      </details>
+    </section> : <section className="review-section review-unavailable"><p className="micro-label">02 · 审查重点</p><h2>先搭建一套工作流。</h2><p>没有当前工作流时，仍可测试连接；审查提示词、材料预览和全面审查会在创建项目后出现。</p><button type="button" className="button secondary" onClick={() => goToBuild(1)}>去搭建工作流</button></section>}
+
+    <section className="review-section review-material" aria-labelledby="review-material-title">
+      <div className="review-section-heading"><div><p className="micro-label">03 · 发送材料</p><h2 id="review-material-title">本次会发送哪些内容？</h2><p>只发送工作流的结构、系统生成的 AGENTS.md 草案和审查提示词。不会发送 API Key、完整请求地址、项目运行内容或其他工作流。</p></div><span className={materialState.material ? 'review-readiness ready' : 'review-readiness'}>{materialState.material ? `已准备 ${materialState.material.reviewedRequest.materialCharacterCount.toLocaleString('zh-CN')} 字符` : '暂不能发送'}</span></div>
+      {materialState.material ? <ReviewMaterialPreview material={materialState.material} current /> : <div className="review-blocked-copy"><AlertCircle size={18} aria-hidden="true" /><p>{materialState.error}</p></div>}
+      {materialState.material && materialState.material.reviewedRequest.materialCharacterCount > REVIEW_MATERIAL_WARNING_CHARACTERS ? <p className="review-material-warning"><AlertCircle size={16} aria-hidden="true" />材料较长，服务商可能需要更多时间和额度完成审查。</p> : null}
+    </section>
+
+    <section className="review-section review-action" aria-labelledby="review-action-title">
+      <div><p className="micro-label">04 · 开始审查</p><h2 id="review-action-title">让审查员给出必要的修改意见。</h2><p>一次审查最多等待 10 分钟。你可以留在这里，也可以继续浏览当前项目；程序不会自动重试或改写任何资料。</p></div>
+      {blockers.length > 0 ? <div className="review-blocker-list">{blockers.map((blocker) => <article key={blocker.title}><AlertCircle size={18} aria-hidden="true" /><div><strong>{blocker.title}</strong><p>{blocker.detail}</p>{blocker.action ? <button type="button" className="text-action" onClick={() => goToBuild(blocker.action!.step)}>{blocker.action.label}</button> : null}</div></article>)}</div> : null}
+      <div className="review-primary-action"><button type="button" className="button primary" disabled={!reviewReady} onClick={startFullReview}>{reviewInProgress ? reviewStageLabel(inFlight.stage) : report ? '重新审查' : '开始全面审查'}</button>{reviewInProgress ? <button type="button" className="button text" onClick={cancelInFlight}>取消</button> : null}</div>
+      {(reviewStatus.kind === 'error' || (reviewStatus.kind === 'success' && !report)) && !reviewInProgress ? <p className={reviewStatus.kind === 'success' ? 'review-status success' : 'review-status error'}>{reviewStatus.message}</p> : null}
+    </section>
+
+    {report && reportSnapshot ? <ReviewReportPanel report={report.report} snapshot={reportSnapshot} reviewedRequest={report.reviewedRequest} reviewedAt={report.reviewedAt} model={report.model} stale={reportStale} onGoToEdit={goToEdit} workflow={workflow} /> : null}
+  </article>
+}
+
+function ReviewMaterialPreview({ material, current = false }: { material: ReviewMaterial; current?: boolean }) {
+  return <ReviewRequestPreview request={material.reviewedRequest} current={current} />
+}
+
+function ReviewRequestPreview({ request, current }: { request: ReviewedRequest; current: boolean }) {
+  const [copyStatus, setCopyStatus] = useState('')
+  const copyRequest = async () => {
+    const text = [
+      '固定审查约束',
+      request.systemContract,
+      '审查提示词',
+      request.userPrompt,
+      '审查材料',
+      request.materialMessage,
+    ].join('\n\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopyStatus('已复制。')
+    } catch {
+      setCopyStatus('当前浏览器无法复制，请手动选择文本。')
+    }
+  }
+
+  return <details className="review-request-preview">
+    <summary>{current ? '查看将要发送的材料' : '查看本次发送材料'} <small>材料部分共 {request.materialCharacterCount.toLocaleString('zh-CN')} 字符</small></summary>
+    <div className="review-request-body">
+      <div className="review-request-actions"><p>{current ? '这是下一次全面审查会发送的精确内容。' : '这是当时实际发送的冻结内容，不会被后续修改替换。'}</p><button type="button" className="text-action" onClick={() => void copyRequest()}>复制材料</button></div>
+      {copyStatus ? <p className="review-status success">{copyStatus}</p> : null}
+      <section><h3>固定审查约束</h3><pre>{request.systemContract}</pre></section>
+      <section><h3>审查提示词</h3><pre>{request.userPrompt}</pre></section>
+      <section><h3>工作流材料</h3><pre>{request.materialMessage}</pre></section>
+    </div>
+  </details>
+}
+
+function ReviewReportPanel({ report, snapshot, reviewedRequest, reviewedAt, model, stale, onGoToEdit, workflow }: {
+  report: ReviewReport
+  snapshot: ReviewMaterialSnapshot
+  reviewedRequest: ReviewedRequest
+  reviewedAt: number
+  model: string
+  stale: boolean
+  onGoToEdit: (target: ReviewEditTarget) => void
+  workflow: WorkflowSchema | null
+}) {
+  const verdictClass = report.overall.verdict === 'pass' ? 'pass' : report.overall.verdict === 'needs_revision' ? 'needs-revision' : 'unassessable'
+  const reviewedAtLabel = new Date(reviewedAt).toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
+  const categoryLabel = (value: string) => {
+    if (value === 'stable') return '长期稳定：可靠'
+    if (value === 'at_risk') return '长期稳定：有风险'
+    if (value === 'efficient') return '维护效率：轻量'
+    if (value === 'adequate') return '维护效率：可接受'
+    if (value === 'burdensome') return '维护效率：偏重'
+    return '暂时无法判断'
+  }
+
+  return <section className="review-report" aria-labelledby="review-report-title">
+    <div className="review-report-heading"><div><p className="micro-label">审查报告</p><h2 id="review-report-title">{reviewReportSummaryLabel(report)}</h2><p>由 {model || '当前模型'} 于 {reviewedAtLabel} 返回。</p></div><span className={`review-verdict ${verdictClass}`}><ShieldCheck size={17} aria-hidden="true" />{reviewReportSummaryLabel(report)}</span></div>
+    {stale ? <div className="review-stale-notice"><AlertCircle size={18} aria-hidden="true" /><div><strong>这份报告基于较早版本。</strong><p>工作流结构、入口协议或审查提示词已经变化。它仍可阅读，但重新审查后才代表当前设计。</p></div></div> : null}
+    <p className="review-report-summary">{report.overall.summary}</p>
+    <div className="review-category-list" aria-label="审查分类">
+      <span>{categoryLabel(report.overall.longTermStability)}</span><span>{categoryLabel(report.overall.maintenanceEfficiency)}</span>
+    </div>
+
+    {report.findings.length > 0 ? <div className="review-findings"><h3>建议优先处理</h3>{report.findings.map((finding) => <ReviewFindingRow key={finding.id} finding={finding} snapshot={snapshot} workflow={workflow} onGoToEdit={onGoToEdit} />)}</div> : null}
+    {report.limits.length > 0 ? <div className="review-limits"><h3>这次判断的边界</h3><ul>{report.limits.map((limit) => <li key={limit}>{limit}</li>)}</ul></div> : null}
+    <ReviewRequestPreview request={reviewedRequest} current={false} />
+  </section>
+}
+
+function ReviewFindingRow({ finding, snapshot, workflow, onGoToEdit }: {
+  finding: ReviewFinding
+  snapshot: ReviewMaterialSnapshot
+  workflow: WorkflowSchema | null
+  onGoToEdit: (target: ReviewEditTarget) => void
+}) {
+  const canEdit = Boolean(workflow && finding.editTarget && reviewEditTargetIsAvailable(workflow, finding.editTarget))
+  return <article className={`review-finding ${finding.severity}`}>
+    <div className="review-finding-meta"><span>{finding.severity === 'must_fix' ? '建议优先处理' : '建议检查'}</span><small>{finding.id}</small></div>
+    <h4>{finding.title}</h4>
+    <p className="review-finding-location">出现位置：{reviewLocationLabel(snapshot, finding.observedLocation)}</p>
+    <p>{finding.analysis}</p>
+    <div className="review-recommendation"><strong>建议</strong><p>{finding.recommendation}</p></div>
+    <div className="review-finding-actions"><details><summary>查看依据</summary><p>{finding.evidence}</p></details>{canEdit && finding.editTarget ? <button type="button" className="button secondary" onClick={() => onGoToEdit(finding.editTarget!)}>去修改</button> : null}</div>
+  </article>
 }
